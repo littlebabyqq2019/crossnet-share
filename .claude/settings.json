@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(cmake --version)",
+      "Read(//c//**)",
+      "Read(//d//**)",
+      "PowerShell(Get-Command qmake -ErrorAction SilentlyContinue)",
+      "Read(//c/Program Files/**)",
+      "PowerShell(Get-Command cl.exe -ErrorAction SilentlyContinue)",
+      "Bash(git init *)",
+      "Bash(git config *)",
+      "Bash(git add *)"
+    ]
+  }
+}

@@ -1,0 +1,93 @@
+name: Build CrossNetShare
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: '5.15.2'
+        host: 'windows'
+        target: 'desktop'
+        arch: 'win64_msvc2019_64'
+        modules: 'qtnetworkauth'
+        cache: true
+
+    - name: Setup MSVC
+      uses: microsoft/setup-msbuild@v1.1
+
+    - name: Configure CMake
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="${{ env.Qt5_DIR }}"
+
+    - name: Build
+      run: |
+        cd build
+        cmake --build . --config Release
+
+    - name: Collect Dependencies
+      run: |
+        cd build/bin
+        & "${{ env.Qt5_DIR }}/bin/windeployqt.exe" --release CrossNetShareServer.exe
+        & "${{ env.Qt5_DIR }}/bin/windeployqt.exe" --release CrossNetShareClient.exe
+
+    - name: Package Release
+      run: |
+        mkdir CrossNetShare-Release
+        mkdir CrossNetShare-Release/Server
+        mkdir CrossNetShare-Release/Client
+
+        # 复制服务器
+        Copy-Item build/bin/CrossNetShareServer.exe CrossNetShare-Release/Server/
+        Copy-Item build/bin/*.dll CrossNetShare-Release/Server/ -ErrorAction SilentlyContinue
+        Copy-Item build/bin/platforms CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
+        Copy-Item build/bin/styles CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
+
+        # 复制客户端
+        Copy-Item build/bin/CrossNetShareClient.exe CrossNetShare-Release/Client/
+        Copy-Item build/bin/*.dll CrossNetShare-Release/Client/ -ErrorAction SilentlyContinue
+        Copy-Item build/bin/platforms CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
+        Copy-Item build/bin/styles CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
+
+        # 复制文档
+        Copy-Item README.md CrossNetShare-Release/
+        Copy-Item QUICKSTART.md CrossNetShare-Release/
+        Copy-Item BUILD.md CrossNetShare-Release/
+
+        # 创建压缩包
+        Compress-Archive -Path CrossNetShare-Release/* -DestinationPath CrossNetShare-Windows-x64.zip
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: CrossNetShare-Windows-x64
+        path: CrossNetShare-Windows-x64.zip
+        retention-days: 30
+
+    - name: Upload Server Executable
+      uses: actions/upload-artifact@v3
+      with:
+        name: CrossNetShareServer
+        path: CrossNetShare-Release/Server/
+        retention-days: 30
+
+    - name: Upload Client Executable
+      uses: actions/upload-artifact@v3
+      with:
+        name: CrossNetShareClient
+        path: CrossNetShare-Release/Client/
+        retention-days: 30
