@@ -14,6 +14,7 @@ public:
 
     // 添加客户端的共享目录
     void addClientShare(const QString& clientId, const QString& sharePath);
+    void addClientShare(const QString& clientId, const QString& sharePath, const std::vector<FileMetadata>& files);
 
     // 移除客户端
     void removeClient(const QString& clientId);

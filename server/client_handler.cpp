@@ -140,11 +140,22 @@ void ClientHandler::handleRegister(const nlohmann::json& payload) {
         clientId_ = QString::fromStdString(payload["clientId"].get<std::string>());
         QString sharePath = QString::fromStdString(payload["sharePath"].get<std::string>());
 
-        // 添加到索引器
-        indexer_->addClientShare(clientId_, sharePath);
+        // 提取客户端发来的文件列表
+        std::vector<FileMetadata> files;
+        if (payload.contains("files") && payload["files"].is_array()) {
+            for (const auto& fileJson : payload["files"]) {
+                FileMetadata file = Protocol::jsonToFileMetadata(fileJson);
+                file.ownerClient = clientId_.toStdString();
+                files.push_back(file);
+            }
+        }
+
+        // 添加到索引器（传入文件列表）
+        indexer_->addClientShare(clientId_, sharePath, files);
         registered_ = true;
 
-        emit logMessage("Client registered: " + clientId_ + " from " + getClientAddress());
+        emit logMessage("Client registered: " + clientId_ + " from " + getClientAddress() +
+                        " with " + QString::number(files.size()) + " files");
         emit clientRegistered(clientId_, sharePath);
 
         // 发送注册成功响应

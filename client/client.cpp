@@ -49,12 +49,22 @@ void Client::disconnectFromServer() {
 }
 
 void Client::registerClient(const QString& clientId, const QString& sharePath) {
+    // 扫描本地共享目录获取文件列表
+    std::vector<FileMetadata> files = FileUtils::scanDirectory(sharePath);
+
     nlohmann::json payload;
     payload["clientId"] = clientId.toStdString();
     payload["sharePath"] = sharePath.toStdString();
 
+    // 将文件列表包含在注册消息中
+    nlohmann::json fileList = nlohmann::json::array();
+    for (const auto& file : files) {
+        fileList.push_back(Protocol::fileMetadataToJson(file));
+    }
+    payload["files"] = fileList;
+
     sendMessage(MessageType::REGISTER_CLIENT, payload);
-    emit logMessage("Registering client: " + clientId);
+    emit logMessage("Registering client: " + clientId + " with " + QString::number(files.size()) + " files");
 }
 
 void Client::requestFileList(const QString& targetClient) {

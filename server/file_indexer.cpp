@@ -21,6 +21,19 @@ void FileIndexer::addClientShare(const QString& clientId, const QString& sharePa
     scanClientFiles(clientShares_[clientId]);
 }
 
+void FileIndexer::addClientShare(const QString& clientId, const QString& sharePath, const std::vector<FileMetadata>& files) {
+    QMutexLocker locker(&mutex_);
+
+    ClientShare share;
+    share.clientId = clientId;
+    share.sharePath = sharePath;
+    share.files = files;
+
+    clientShares_[clientId] = share;
+
+    // 不需要扫描，直接使用客户端提供的文件列表
+}
+
 void FileIndexer::removeClient(const QString& clientId) {
     QMutexLocker locker(&mutex_);
     clientShares_.remove(clientId);
