@@ -509,10 +509,6 @@ void WebServer::handleFilePreview(QTcpSocket* socket, const HttpRequest& request
     response.body = "<div class=\"empty\">Client not connected. Cannot preview remote file.</div>";
     sendResponse(socket, response);
 }
-        response.body = preview.data;
-    }
-    sendResponse(socket, response);
-}
 
 void WebServer::serveStaticFile(QTcpSocket* socket, const QString& path) {
     Q_UNUSED(path)
