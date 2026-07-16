@@ -1,10 +1,13 @@
 #include "client_handler.h"
+#include "server.h"
 #include "common/protocol.h"
 #include "common/file_utils.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QDataStream>
 #include <QHostAddress>
+#include <QEventLoop>
+#include <QTimer>
 
 namespace CrossNetShare {
 
@@ -12,6 +15,7 @@ ClientHandler::ClientHandler(QTcpSocket* socket, FileIndexer* indexer, QObject* 
     : QObject(parent)
     , socket_(socket)
     , indexer_(indexer)
+    , server_(nullptr)
     , registered_(false)
 {
     socket_->setParent(this);

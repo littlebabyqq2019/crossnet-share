@@ -45,6 +45,9 @@ public:
     // 获取已连接的客户端列表
     QStringList getConnectedClients() const;
 
+    // 根据clientId查找对应的ClientHandler
+    ClientHandler* findClientHandler(const QString& clientId) const;
+
 signals:
     void started();
     void stopped();

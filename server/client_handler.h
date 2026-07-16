@@ -9,12 +9,16 @@
 
 namespace CrossNetShare {
 
+class Server;
+
 class ClientHandler : public QObject {
     Q_OBJECT
 
 public:
     explicit ClientHandler(QTcpSocket* socket, FileIndexer* indexer, QObject* parent = nullptr);
     ~ClientHandler();
+
+    void setServer(Server* server) { server_ = server; }
 
     QString getClientId() const { return clientId_; }
     QString getClientAddress() const;
@@ -45,6 +49,7 @@ private:
 
     QTcpSocket* socket_;
     FileIndexer* indexer_;
+    Server* server_;
     QString clientId_;
     bool registered_;
     QByteArray receiveBuffer_;

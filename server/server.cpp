@@ -14,6 +14,7 @@ Server::Server(QObject* parent)
     , authManager_(new AuthManager(this))
 {
     webServer_->setAuthManager(authManager_);
+    webServer_->setServer(this);
     authManager_->loadUsers(QCoreApplication::applicationDirPath() + "/users.json");
 
     connect(fileWatcher_, &FileWatcher::logMessage, this, &Server::onFileWatcherLog);
@@ -135,6 +136,15 @@ QStringList Server::getConnectedClients() const {
     return clients;
 }
 
+ClientHandler* Server::findClientHandler(const QString& clientId) const {
+    for (ClientHandler* client : clients_) {
+        if (client->isRegistered() && client->getClientId() == clientId) {
+            return client;
+        }
+    }
+    return nullptr;
+}
+
 void Server::onNewConnection() {
     QTcpServer* server = qobject_cast<QTcpServer*>(sender());
     if (!server) {
@@ -145,6 +155,7 @@ void Server::onNewConnection() {
         QTcpSocket* socket = server->nextPendingConnection();
 
         ClientHandler* handler = new ClientHandler(socket, &indexer_, this);
+        handler->setServer(this);
         clients_.append(handler);
 
         connect(handler, &ClientHandler::disconnected, this, &Server::onClientDisconnected);

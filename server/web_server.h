@@ -11,6 +11,7 @@ namespace CrossNetShare {
 
 class FileIndexer;
 class AuthManager;
+class Server;
 
 struct HttpRequest {
     QString method;         // GET, POST, etc.
@@ -44,6 +45,7 @@ public:
     quint16 getPort() const { return port_; }
 
     void setAuthManager(AuthManager* authManager);
+    void setServer(Server* server);
 
 signals:
     void started();
@@ -82,6 +84,7 @@ private:
     QTcpServer* tcpServer_;
     FileIndexer* indexer_;
     AuthManager* authManager_;
+    Server* server_;
     bool running_;
     quint16 port_;
 

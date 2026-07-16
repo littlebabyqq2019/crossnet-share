@@ -1,4 +1,6 @@
 #include "web_server.h"
+#include "server.h"
+#include "client_handler.h"
 #include "auth_manager.h"
 #include "document_converter.h"
 #include "file_indexer.h"
@@ -63,6 +65,7 @@ WebServer::WebServer(FileIndexer* indexer, QObject* parent)
     , tcpServer_(new QTcpServer(this))
     , indexer_(indexer)
     , authManager_(nullptr)
+    , server_(nullptr)
     , running_(false)
     , port_(8080)
 {
@@ -109,6 +112,10 @@ void WebServer::stop() {
 
 void WebServer::setAuthManager(AuthManager* authManager) {
     authManager_ = authManager;
+}
+
+void WebServer::setServer(Server* server) {
+    server_ = server;
 }
 
 void WebServer::onNewConnection() {
@@ -372,11 +379,16 @@ void WebServer::handleFileDownload(QTcpSocket* socket, const HttpRequest& reques
     QString fullPath = indexer_->resolveFilePath(clientId, relativePath);
     QFile file(fullPath);
     QFileInfo info(fullPath);
+
+    // 检查文件是否真实存在于服务器本地
     if (!info.exists() || !info.isFile() || !file.open(QIODevice::ReadOnly)) {
         HttpResponse response;
-        response.statusCode = 404;
-        response.statusText = "Not Found";
-        response.body = "File not found";
+        response.statusCode = 503;
+        response.statusText = "Service Unavailable";
+        response.headers["Content-Type"] = "text/html; charset=utf-8";
+        response.body = "<html><body><h1>Remote File Download Not Supported</h1>"
+                        "<p>This file belongs to a remote client and cannot be downloaded through the web interface yet.</p>"
+                        "<p>Please use the CrossNetShare client application to download files from remote clients.</p></body></html>";
         sendResponse(socket, response);
         return;
     }
@@ -401,6 +413,19 @@ void WebServer::handleFilePreview(QTcpSocket* socket, const HttpRequest& request
     }
 
     QString fullPath = indexer_->resolveFilePath(clientId, relativePath);
+    QFileInfo info(fullPath);
+
+    // 检查文件是否真实存在于服务器本地
+    if (!info.exists()) {
+        HttpResponse response;
+        response.statusCode = 503;
+        response.statusText = "Service Unavailable";
+        response.headers["Content-Type"] = "text/html; charset=utf-8";
+        response.body = "<div class=\"empty\">Remote file preview is not yet supported. This file belongs to a remote client.<br>Please use the CrossNetShare client application to access remote files.</div>";
+        sendResponse(socket, response);
+        return;
+    }
+
     auto preview = DocumentConverter::previewFile(fullPath);
     HttpResponse response;
     if (!preview.success) {
