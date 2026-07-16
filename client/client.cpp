@@ -263,6 +263,10 @@ void Client::handleMessage(MessageType type, const nlohmann::json& payload) {
         handleFilteredFilesResponse(payload);
         break;
 
+    case MessageType::DOWNLOAD_REQUEST:
+        handleDownloadRequest(payload);
+        break;
+
     case MessageType::DOWNLOAD_RESPONSE:
         handleDownloadResponse(payload);
         break;
@@ -314,6 +318,61 @@ void Client::handleFileListResponse(const nlohmann::json& payload) {
 
 void Client::handleFilteredFilesResponse(const nlohmann::json& payload) {
     handleFileListResponse(payload);
+}
+
+void Client::handleDownloadRequest(const nlohmann::json& payload) {
+    try {
+        QString relativePath = QString::fromStdString(payload["relativePath"].get<std::string>());
+
+        // 构建完整路径
+        QString fullPath = FileUtils::joinPath(sharePath_, relativePath);
+        QFileInfo fileInfo(fullPath);
+
+        if (!fileInfo.exists() || !fileInfo.isFile()) {
+            nlohmann::json errorResponse;
+            errorResponse["error"] = "File not found: " + relativePath.toStdString();
+            sendMessage(MessageType::ERROR_MESSAGE, errorResponse);
+            return;
+        }
+
+        // 读取文件
+        QFile file(fullPath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            nlohmann::json errorResponse;
+            errorResponse["error"] = "Cannot read file: " + file.errorString().toStdString();
+            sendMessage(MessageType::ERROR_MESSAGE, errorResponse);
+            return;
+        }
+
+        // 发送下载响应
+        nlohmann::json response;
+        response["filename"] = fileInfo.fileName().toStdString();
+        response["size"] = fileInfo.size();
+        sendMessage(MessageType::DOWNLOAD_RESPONSE, response);
+
+        // 分块发送文件数据
+        const qint64 chunkSize = 64 * 1024; // 64KB
+        while (!file.atEnd()) {
+            QByteArray chunk = file.read(chunkSize);
+            nlohmann::json dataMsg;
+            dataMsg["data"] = chunk.toBase64().toStdString();
+            sendMessage(MessageType::FILE_DATA, dataMsg);
+        }
+
+        file.close();
+
+        // 发送完成消息
+        nlohmann::json completeMsg;
+        completeMsg["success"] = true;
+        sendMessage(MessageType::FILE_COMPLETE, completeMsg);
+
+        emit logMessage("File sent: " + relativePath);
+
+    } catch (const std::exception& e) {
+        nlohmann::json errorResponse;
+        errorResponse["error"] = std::string("Download request failed: ") + e.what();
+        sendMessage(MessageType::ERROR_MESSAGE, errorResponse);
+    }
 }
 
 void Client::handleDownloadResponse(const nlohmann::json& payload) {
