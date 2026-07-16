@@ -3,6 +3,8 @@
 #include "common/file_utils.h"
 #include <QFile>
 #include <QFileInfo>
+#include <QDataStream>
+#include <QHostAddress>
 
 namespace CrossNetShare {
 
