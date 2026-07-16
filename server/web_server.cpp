@@ -397,7 +397,7 @@ void WebServer::handleFileDownload(QTcpSocket* socket, const HttpRequest& reques
     if (server_) {
         ClientHandler* handler = server_->findClientHandler(clientId);
         if (handler) {
-            auto result = handler->requestFileSync(relativePath, 30000);
+            auto result = handler->requestFileSync(relativePath, 60000);
             if (result.success) {
                 HttpResponse response;
                 response.headers["Content-Type"] = "application/octet-stream";
@@ -463,7 +463,7 @@ void WebServer::handleFilePreview(QTcpSocket* socket, const HttpRequest& request
     if (server_) {
         ClientHandler* handler = server_->findClientHandler(clientId);
         if (handler) {
-            auto result = handler->requestFileSync(relativePath, 30000);
+            auto result = handler->requestFileSync(relativePath, 60000);
             if (result.success) {
                 // 将文件数据写入临时文件用于预览
                 QString tempPath = QDir::temp().filePath("crossnet_preview_" + QFileInfo(relativePath).fileName());
