@@ -1,4 +1,6 @@
 #include "server.h"
+#include "web_server.h"
+#include "auth_manager.h"
 #include <QNetworkInterface>
 
 namespace CrossNetShare {
@@ -6,7 +8,16 @@ namespace CrossNetShare {
 Server::Server(QObject* parent)
     : QObject(parent)
     , running_(false)
+    , fileWatcher_(new FileWatcher(this))
+    , webServer_(new WebServer(&indexer_, this))
+    , authManager_(new AuthManager(this))
 {
+    webServer_->setAuthManager(authManager_);
+
+    connect(fileWatcher_, &FileWatcher::logMessage, this, &Server::onFileWatcherLog);
+    connect(fileWatcher_, &FileWatcher::directoryChanged, this, &Server::onDirectoryChanged);
+    connect(webServer_, &WebServer::logMessage, this, &Server::logMessage);
+    connect(webServer_, &WebServer::error, this, &Server::error);
 }
 
 Server::~Server() {
@@ -51,6 +62,15 @@ bool Server::start(const ServerConfig& config) {
         emit logMessage("Listening on " + address.toString() + ":" + QString::number(config_.port));
     }
 
+    // 启动Web服务器
+    if (config_.webEnabled) {
+        if (webServer_->start(config_.webPort)) {
+            emit logMessage("Web access: http://0.0.0.0:" + QString::number(config_.webPort));
+        } else {
+            emit logMessage("Warning: Web server failed to start on port " + QString::number(config_.webPort));
+        }
+    }
+
     running_ = true;
     emit started();
     emit logMessage("Server started successfully");
@@ -61,6 +81,16 @@ bool Server::start(const ServerConfig& config) {
 void Server::stop() {
     if (!running_) {
         return;
+    }
+
+    // 停止Web服务器
+    if (webServer_) {
+        webServer_->stop();
+    }
+
+    // 停止文件监控
+    if (fileWatcher_) {
+        fileWatcher_->clearAll();
     }
 
     // 关闭所有服务器
@@ -140,7 +170,21 @@ void Server::onClientRegistered(const QString& clientId, const QString& sharePat
     if (handler) {
         emit clientConnected(clientId, handler->getClientAddress());
         emit logMessage("Client '" + clientId + "' registered with share path: " + sharePath);
+
+        // 开始监控该客户端的共享目录
+        fileWatcher_->addWatchPath(clientId, sharePath);
     }
+}
+
+void Server::onFileWatcherLog(const QString& message) {
+    emit logMessage("[FileWatcher] " + message);
+}
+
+void Server::onDirectoryChanged(const QString& clientId, const QString& path) {
+    Q_UNUSED(path)
+    // 目录内容变化，刷新该客户端的文件索引
+    indexer_.refreshIndex(clientId);
+    emit logMessage("Auto-refreshed index for client: " + clientId);
 }
 
 }

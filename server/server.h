@@ -2,6 +2,7 @@
 
 #include "file_indexer.h"
 #include "client_handler.h"
+#include "file_watcher.h"
 #include <QObject>
 #include <QTcpServer>
 #include <QList>
@@ -9,12 +10,19 @@
 
 namespace CrossNetShare {
 
+class WebServer;
+class AuthManager;
+
 struct ServerConfig {
     quint16 port;
     bool uploadEnabled;
     QList<QHostAddress> listenAddresses;
 
-    ServerConfig() : port(8888), uploadEnabled(true) {}
+    // Web server config
+    bool webEnabled;
+    quint16 webPort;
+
+    ServerConfig() : port(8888), uploadEnabled(true), webEnabled(true), webPort(8080) {}
 };
 
 class Server : public QObject {
@@ -32,6 +40,7 @@ public:
     void setConfig(const ServerConfig& config);
 
     FileIndexer* getIndexer() { return &indexer_; }
+    WebServer* getWebServer() { return webServer_; }
 
     // 获取已连接的客户端列表
     QStringList getConnectedClients() const;
@@ -49,6 +58,8 @@ private slots:
     void onClientDisconnected(const QString& clientId);
     void onClientLog(const QString& message);
     void onClientRegistered(const QString& clientId, const QString& sharePath);
+    void onFileWatcherLog(const QString& message);
+    void onDirectoryChanged(const QString& clientId, const QString& path);
 
 private:
     ServerConfig config_;
@@ -56,6 +67,9 @@ private:
     QList<QTcpServer*> servers_;
     QList<ClientHandler*> clients_;
     FileIndexer indexer_;
+    FileWatcher* fileWatcher_;
+    WebServer* webServer_;
+    AuthManager* authManager_;
 };
 
 }

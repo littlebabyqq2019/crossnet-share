@@ -13,7 +13,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Install Qt
       uses: jurplel/install-qt-action@v3
@@ -72,21 +72,21 @@ jobs:
         Compress-Archive -Path CrossNetShare-Release/* -DestinationPath CrossNetShare-Windows-x64.zip
 
     - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: CrossNetShare-Windows-x64
         path: CrossNetShare-Windows-x64.zip
         retention-days: 30
 
     - name: Upload Server Executable
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: CrossNetShareServer
         path: CrossNetShare-Release/Server/
         retention-days: 30
 
     - name: Upload Client Executable
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: CrossNetShareClient
         path: CrossNetShare-Release/Client/

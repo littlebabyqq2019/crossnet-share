@@ -39,6 +39,8 @@ private:
     // UI控件
     QSpinBox* portSpinBox_;
     QCheckBox* uploadEnabledCheckBox_;
+    QCheckBox* webEnabledCheckBox_;
+    QSpinBox* webPortSpinBox_;
     QPushButton* startStopButton_;
     QPushButton* refreshButton_;
     QLabel* statusLabel_;

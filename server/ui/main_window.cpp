@@ -50,6 +50,16 @@ void MainWindow::setupUi() {
     uploadEnabledCheckBox_->setChecked(true);
     configLayout->addWidget(uploadEnabledCheckBox_);
 
+    webEnabledCheckBox_ = new QCheckBox("Enable Web");
+    webEnabledCheckBox_->setChecked(true);
+    configLayout->addWidget(webEnabledCheckBox_);
+
+    configLayout->addWidget(new QLabel("Web Port:"));
+    webPortSpinBox_ = new QSpinBox();
+    webPortSpinBox_->setRange(1024, 65535);
+    webPortSpinBox_->setValue(8080);
+    configLayout->addWidget(webPortSpinBox_);
+
     startStopButton_ = new QPushButton("Start Server");
     connect(startStopButton_, &QPushButton::clicked, this, &MainWindow::onStartStopClicked);
     configLayout->addWidget(startStopButton_);
@@ -124,6 +134,8 @@ void MainWindow::onStartStopClicked() {
         ServerConfig config;
         config.port = portSpinBox_->value();
         config.uploadEnabled = uploadEnabledCheckBox_->isChecked();
+        config.webEnabled = webEnabledCheckBox_->isChecked();
+        config.webPort = webPortSpinBox_->value();
 
         if (!server_->start(config)) {
             QMessageBox::critical(this, "Error", "Failed to start server");
@@ -143,11 +155,15 @@ void MainWindow::onRefreshIndexClicked() {
 void MainWindow::onServerStarted() {
     updateServerStatus();
     portSpinBox_->setEnabled(false);
+    webPortSpinBox_->setEnabled(false);
+    webEnabledCheckBox_->setEnabled(false);
 }
 
 void MainWindow::onServerStopped() {
     updateServerStatus();
     portSpinBox_->setEnabled(true);
+    webPortSpinBox_->setEnabled(true);
+    webEnabledCheckBox_->setEnabled(true);
     clientListWidget_->clear();
 }
 
@@ -178,8 +194,12 @@ void MainWindow::updateServerStatus() {
     if (server_->isRunning()) {
         startStopButton_->setText("Stop Server");
         ServerConfig config = server_->getConfig();
-        statusLabel_->setText("Server is running on port " + QString::number(config.port) +
-                             " (Upload " + (config.uploadEnabled ? "Enabled" : "Disabled") + ")");
+        QString status = "Server is running on port " + QString::number(config.port) +
+                        " (Upload " + (config.uploadEnabled ? "Enabled" : "Disabled") + ")";
+        if (config.webEnabled) {
+            status += "\nWeb: http://0.0.0.0:" + QString::number(config.webPort) + " (admin/admin123)";
+        }
+        statusLabel_->setText(status);
         statusLabel_->setStyleSheet("QLabel { color: green; font-weight: bold; }");
     } else {
         startStopButton_->setText("Start Server");

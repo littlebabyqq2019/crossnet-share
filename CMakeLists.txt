@@ -45,6 +45,14 @@ add_executable(CrossNetShareServer
     server/file_indexer.h
     server/client_handler.cpp
     server/client_handler.h
+    server/file_watcher.cpp
+    server/file_watcher.h
+    server/web_server.cpp
+    server/web_server.h
+    server/auth_manager.cpp
+    server/auth_manager.h
+    server/document_converter.cpp
+    server/document_converter.h
     server/ui/main_window.cpp
     server/ui/main_window.h
 )
