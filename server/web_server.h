@@ -69,6 +69,7 @@ private:
     void handleFileList(QTcpSocket* socket, const HttpRequest& request);
     void handleFileSearch(QTcpSocket* socket, const HttpRequest& request);
     void handleFileDownload(QTcpSocket* socket, const HttpRequest& request);
+    void handleBatchDownload(QTcpSocket* socket, const HttpRequest& request);
     void handleFilePreview(QTcpSocket* socket, const HttpRequest& request);
 
     // Static file serving
