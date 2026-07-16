@@ -40,7 +40,7 @@ jobs:
 
     - name: Collect Dependencies
       run: |
-        cd build/bin
+        cd build/bin/Release
         & "${{ env.Qt5_DIR }}/bin/windeployqt.exe" --release CrossNetShareServer.exe
         & "${{ env.Qt5_DIR }}/bin/windeployqt.exe" --release CrossNetShareClient.exe
 
@@ -51,16 +51,16 @@ jobs:
         mkdir CrossNetShare-Release/Client
 
         # 复制服务器
-        Copy-Item build/bin/CrossNetShareServer.exe CrossNetShare-Release/Server/
-        Copy-Item build/bin/*.dll CrossNetShare-Release/Server/ -ErrorAction SilentlyContinue
-        Copy-Item build/bin/platforms CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
-        Copy-Item build/bin/styles CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
+        Copy-Item build/bin/Release/CrossNetShareServer.exe CrossNetShare-Release/Server/
+        Copy-Item build/bin/Release/*.dll CrossNetShare-Release/Server/ -ErrorAction SilentlyContinue
+        Copy-Item build/bin/Release/platforms CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
+        Copy-Item build/bin/Release/styles CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
 
         # 复制客户端
-        Copy-Item build/bin/CrossNetShareClient.exe CrossNetShare-Release/Client/
-        Copy-Item build/bin/*.dll CrossNetShare-Release/Client/ -ErrorAction SilentlyContinue
-        Copy-Item build/bin/platforms CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
-        Copy-Item build/bin/styles CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
+        Copy-Item build/bin/Release/CrossNetShareClient.exe CrossNetShare-Release/Client/
+        Copy-Item build/bin/Release/*.dll CrossNetShare-Release/Client/ -ErrorAction SilentlyContinue
+        Copy-Item build/bin/Release/platforms CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
+        Copy-Item build/bin/Release/styles CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
 
         # 复制文档
         Copy-Item README.md CrossNetShare-Release/
