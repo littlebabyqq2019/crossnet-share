@@ -7,6 +7,8 @@
 #include <QMessageBox>
 #include <QHeaderView>
 #include <QTreeWidgetItem>
+#include <QStandardPaths>
+#include <QDir>
 
 namespace CrossNetShare {
 
@@ -31,10 +33,24 @@ MainWindow::MainWindow(QWidget* parent)
     connect(fileManager_, &FileManager::uploadStarted, this, &MainWindow::onUploadStarted);
     connect(fileManager_, &FileManager::uploadFinished, this, &MainWindow::onUploadFinished);
 
+    // 启用自动重连
+    client_->enableAutoReconnect(true);
+
+    // 加载配置
+    QString configPath = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/crossnet_client_config.json";
+    QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation));
+
+    if (client_->loadConfig(configPath)) {
+        onLogMessage("Configuration loaded, will auto-connect and register");
+    }
+
     updateConnectionStatus();
 }
 
 MainWindow::~MainWindow() {
+    // 保存配置
+    QString configPath = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/crossnet_client_config.json";
+    client_->saveConfig(configPath);
 }
 
 void MainWindow::setupUi() {

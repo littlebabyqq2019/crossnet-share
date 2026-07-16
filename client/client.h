@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QTcpSocket>
 #include <QByteArray>
+#include <QTimer>
 #include <functional>
 
 namespace CrossNetShare {
@@ -19,11 +20,16 @@ public:
     // 连接到服务器
     bool connectToServer(const QString& host, quint16 port);
     void disconnectFromServer();
+    void enableAutoReconnect(bool enable);
 
     bool isConnected() const { return connected_; }
 
     // 注册客户端
     void registerClient(const QString& clientId, const QString& sharePath);
+
+    // 保存/加载配置
+    void saveConfig(const QString& configPath);
+    bool loadConfig(const QString& configPath);
 
     // 请求文件列表
     void requestFileList(const QString& targetClient = "");
@@ -78,6 +84,17 @@ private:
     QTcpSocket* socket_;
     bool connected_;
     QByteArray receiveBuffer_;
+
+    // 自动重连
+    QTimer* reconnectTimer_;
+    bool autoReconnect_;
+    QString serverHost_;
+    quint16 serverPort_;
+    int reconnectAttempts_;
+
+    // 配置信息
+    QString clientId_;
+    QString sharePath_;
 
     // 当前下载状态
     struct DownloadState {

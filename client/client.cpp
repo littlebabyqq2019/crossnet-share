@@ -2,6 +2,9 @@
 #include "common/protocol.h"
 #include "common/file_utils.h"
 #include <QDataStream>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 namespace CrossNetShare {
 
@@ -9,12 +12,26 @@ Client::Client(QObject* parent)
     : QObject(parent)
     , socket_(new QTcpSocket(this))
     , connected_(false)
+    , reconnectTimer_(new QTimer(this))
+    , autoReconnect_(false)
+    , serverPort_(0)
+    , reconnectAttempts_(0)
 {
     connect(socket_, &QTcpSocket::connected, this, &Client::onConnected);
     connect(socket_, &QTcpSocket::disconnected, this, &Client::onDisconnected);
     connect(socket_, &QTcpSocket::readyRead, this, &Client::onReadyRead);
     connect(socket_, QOverload<QAbstractSocket::SocketError>::of(&QTcpSocket::error),
             this, &Client::onError);
+
+    // 配置重连定时器
+    reconnectTimer_->setSingleShot(true);
+    connect(reconnectTimer_, &QTimer::timeout, this, [this]() {
+        if (autoReconnect_ && !connected_ && !serverHost_.isEmpty()) {
+            reconnectAttempts_++;
+            emit logMessage("Reconnecting to server (attempt " + QString::number(reconnectAttempts_) + ")...");
+            socket_->connectToHost(serverHost_, serverPort_);
+        }
+    });
 }
 
 Client::~Client() {
@@ -27,19 +44,32 @@ bool Client::connectToServer(const QString& host, quint16 port) {
         return false;
     }
 
+    serverHost_ = host;
+    serverPort_ = port;
+
     emit logMessage("Connecting to " + host + ":" + QString::number(port) + "...");
     socket_->connectToHost(host, port);
 
     // 等待连接（最多5秒）
     if (!socket_->waitForConnected(5000)) {
         emit error("Connection failed: " + socket_->errorString());
+
+        // 启动自动重连
+        if (autoReconnect_) {
+            int delay = qMin(30000, 3000 * (reconnectAttempts_ + 1)); // 3秒到30秒递增
+            reconnectTimer_->start(delay);
+        }
         return false;
     }
 
+    reconnectAttempts_ = 0;
     return true;
 }
 
 void Client::disconnectFromServer() {
+    autoReconnect_ = false; // 主动断开时停止自动重连
+    reconnectTimer_->stop();
+
     if (socket_->state() != QAbstractSocket::UnconnectedState) {
         socket_->disconnectFromHost();
         if (socket_->state() != QAbstractSocket::UnconnectedState) {
@@ -48,7 +78,18 @@ void Client::disconnectFromServer() {
     }
 }
 
+void Client::enableAutoReconnect(bool enable) {
+    autoReconnect_ = enable;
+    if (!enable) {
+        reconnectTimer_->stop();
+    }
+}
+
 void Client::registerClient(const QString& clientId, const QString& sharePath) {
+    // 保存配置用于重连
+    clientId_ = clientId;
+    sharePath_ = sharePath;
+
     // 扫描本地共享目录获取文件列表
     std::vector<FileMetadata> files = FileUtils::scanDirectory(sharePath);
 
@@ -146,14 +187,30 @@ void Client::uploadFile(const QString& localPath, const QString& relativePath) {
 
 void Client::onConnected() {
     connected_ = true;
+    reconnectAttempts_ = 0;
+    reconnectTimer_->stop();
+
     emit connected();
     emit logMessage("Connected to server");
+
+    // 如果有保存的配置，自动重新注册
+    if (!clientId_.isEmpty() && !sharePath_.isEmpty()) {
+        emit logMessage("Auto-registering with saved configuration...");
+        registerClient(clientId_, sharePath_);
+    }
 }
 
 void Client::onDisconnected() {
     connected_ = false;
     emit disconnected();
     emit logMessage("Disconnected from server");
+
+    // 启动自动重连
+    if (autoReconnect_ && !serverHost_.isEmpty()) {
+        int delay = qMin(30000, 3000 * (reconnectAttempts_ + 1));
+        emit logMessage("Will attempt to reconnect in " + QString::number(delay / 1000) + " seconds...");
+        reconnectTimer_->start(delay);
+    }
 }
 
 void Client::onReadyRead() {
@@ -341,6 +398,50 @@ void Client::sendMessage(MessageType type, const nlohmann::json& payload) {
     QByteArray data = Protocol::serializeMessage(type, payload);
     socket_->write(data);
     socket_->flush();
+}
+
+void Client::saveConfig(const QString& configPath) {
+    QJsonObject config;
+    config["serverHost"] = serverHost_;
+    config["serverPort"] = static_cast<int>(serverPort_);
+    config["clientId"] = clientId_;
+    config["sharePath"] = sharePath_;
+    config["autoReconnect"] = autoReconnect_;
+
+    QJsonDocument doc(config);
+    QFile file(configPath);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(doc.toJson());
+        file.close();
+        emit logMessage("Configuration saved to " + configPath);
+    } else {
+        emit error("Failed to save configuration: " + file.errorString());
+    }
+}
+
+bool Client::loadConfig(const QString& configPath) {
+    QFile file(configPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+
+    QByteArray data = file.readAll();
+    file.close();
+
+    QJsonDocument doc = QJsonDocument::fromJson(data);
+    if (!doc.isObject()) {
+        return false;
+    }
+
+    QJsonObject config = doc.object();
+    serverHost_ = config["serverHost"].toString();
+    serverPort_ = static_cast<quint16>(config["serverPort"].toInt());
+    clientId_ = config["clientId"].toString();
+    sharePath_ = config["sharePath"].toString();
+    autoReconnect_ = config["autoReconnect"].toBool(true);
+
+    emit logMessage("Configuration loaded from " + configPath);
+    return true;
 }
 
 }
