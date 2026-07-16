@@ -1,6 +1,7 @@
 #include "file_watcher.h"
 #include <QDir>
 #include <QDirIterator>
+#include <QFileInfo>
 
 namespace CrossNetShare {
 

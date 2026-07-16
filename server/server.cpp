@@ -1,6 +1,7 @@
 #include "server.h"
 #include "web_server.h"
 #include "auth_manager.h"
+#include <QCoreApplication>
 #include <QNetworkInterface>
 
 namespace CrossNetShare {
@@ -13,6 +14,7 @@ Server::Server(QObject* parent)
     , authManager_(new AuthManager(this))
 {
     webServer_->setAuthManager(authManager_);
+    authManager_->loadUsers(QCoreApplication::applicationDirPath() + "/users.json");
 
     connect(fileWatcher_, &FileWatcher::logMessage, this, &Server::onFileWatcherLog);
     connect(fileWatcher_, &FileWatcher::directoryChanged, this, &Server::onDirectoryChanged);

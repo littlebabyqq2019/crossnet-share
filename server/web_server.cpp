@@ -319,7 +319,7 @@ void WebServer::handleFileList(QTcpSocket* socket, const HttpRequest& request) {
         item["id"] = fileId(file).toStdString();
         item["humanSize"] = humanSize(file.size).toStdString();
         item["previewSupported"] = DocumentConverter::isPreviewSupported(
-            indexer_->resolveFilePath(QString::fromStdString(file.ownerClient), QString::fromStdString(file.relativePath))).toStdString();
+            indexer_->resolveFilePath(QString::fromStdString(file.ownerClient), QString::fromStdString(file.relativePath)));
         root["files"].push_back(item);
     }
 
