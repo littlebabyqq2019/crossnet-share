@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/message.h"
+#include <nlohmann/json.hpp>
 #include <QObject>
 #include <QTcpSocket>
 #include <QByteArray>

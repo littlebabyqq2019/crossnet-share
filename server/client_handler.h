@@ -2,6 +2,7 @@
 
 #include "common/message.h"
 #include "file_indexer.h"
+#include <nlohmann/json.hpp>
 #include <QObject>
 #include <QTcpSocket>
 #include <QByteArray>
