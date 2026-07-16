@@ -22,8 +22,7 @@ jobs:
         host: 'windows'
         target: 'desktop'
         arch: 'win64_msvc2019_64'
-        modules: 'qtnetworkauth'
-        cache: true
+        cache: false
 
     - name: Setup MSVC
       uses: microsoft/setup-msbuild@v1.1
