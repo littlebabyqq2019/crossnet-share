@@ -5,6 +5,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDataStream>
+#include <QElapsedTimer>
+#include <QCoreApplication>
 #include <QHostAddress>
 #include <QEventLoop>
 #include <QTimer>

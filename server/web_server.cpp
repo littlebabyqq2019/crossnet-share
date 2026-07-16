@@ -453,7 +453,7 @@ void WebServer::handleFilePreview(QTcpSocket* socket, const HttpRequest& request
             response.body = "<div class=\"empty\">" + preview.error.toHtmlEscaped().toUtf8() + "</div>";
         } else {
             response.headers["Content-Type"] = preview.mimeType;
-            response.body = preview.content;
+            response.body = preview.data;
         }
         sendResponse(socket, response);
         return;
@@ -481,7 +481,7 @@ void WebServer::handleFilePreview(QTcpSocket* socket, const HttpRequest& request
                         response.body = "<div class=\"empty\">" + preview.error.toHtmlEscaped().toUtf8() + "</div>";
                     } else {
                         response.headers["Content-Type"] = preview.mimeType;
-                        response.body = preview.content;
+                        response.body = preview.data;
                     }
 
                     // 清理临时文件
