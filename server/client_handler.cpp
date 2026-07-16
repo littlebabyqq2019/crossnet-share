@@ -17,6 +17,8 @@ ClientHandler::ClientHandler(QTcpSocket* socket, FileIndexer* indexer, QObject* 
     , indexer_(indexer)
     , server_(nullptr)
     , registered_(false)
+    , syncRequestActive_(false)
+    , syncRequestCompleted_(false)
 {
     socket_->setParent(this);
 
@@ -79,6 +81,36 @@ void ClientHandler::onError(QAbstractSocket::SocketError error) {
 }
 
 void ClientHandler::handleMessage(MessageType type, const nlohmann::json& payload) {
+    // 检查是否是同步文件请求的响应
+    if (syncRequestActive_) {
+        if (type == MessageType::DOWNLOAD_RESPONSE) {
+            // 文件开始传输，清空缓冲区
+            syncRequestData_.clear();
+            syncRequestError_.clear();
+            return;
+        } else if (type == MessageType::FILE_DATA) {
+            // 积累文件数据
+            try {
+                std::string dataBase64 = payload["data"].get<std::string>();
+                QByteArray chunk = QByteArray::fromBase64(QByteArray::fromStdString(dataBase64));
+                syncRequestData_.append(chunk);
+            } catch (...) {
+                syncRequestError_ = "Failed to decode file data";
+                syncRequestCompleted_ = true;
+            }
+            return;
+        } else if (type == MessageType::FILE_COMPLETE) {
+            // 文件传输完成
+            syncRequestCompleted_ = true;
+            return;
+        } else if (type == MessageType::ERROR_MESSAGE) {
+            // 错误
+            syncRequestError_ = QString::fromStdString(payload.value("error", "Unknown error"));
+            syncRequestCompleted_ = true;
+            return;
+        }
+    }
+
     // 检查是否需要转发消息（用于文件传输转发）
     if (forwardState_.isActive && forwardState_.requester) {
         // 如果当前有活跃的转发状态，转发这些消息给请求者
@@ -394,6 +426,60 @@ void ClientHandler::sendFile(const QString& filePath, const FileMetadata& meta) 
 
 void ClientHandler::forwardMessage(MessageType type, const nlohmann::json& payload) {
     sendMessage(type, payload);
+}
+
+ClientHandler::FileRequestResult ClientHandler::requestFileSync(const QString& relativePath, int timeoutMs) {
+    FileRequestResult result;
+    result.success = false;
+
+    if (!registered_) {
+        result.error = "Client not registered";
+        return result;
+    }
+
+    // 准备同步请求状态
+    syncRequestActive_ = true;
+    syncRequestCompleted_ = false;
+    syncRequestData_.clear();
+    syncRequestError_.clear();
+
+    // 发送下载请求
+    nlohmann::json request;
+    request["ownerClient"] = clientId_.toStdString();
+    request["relativePath"] = relativePath.toStdString();
+    sendMessage(MessageType::DOWNLOAD_REQUEST, request);
+
+    // 等待响应（使用事件循环）
+    QElapsedTimer timer;
+    timer.start();
+
+    while (!syncRequestCompleted_ && timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+
+        // 检查连接状态
+        if (socket_->state() != QAbstractSocket::ConnectedState) {
+            result.error = "Connection lost";
+            syncRequestActive_ = false;
+            return result;
+        }
+    }
+
+    // 清除同步请求状态
+    syncRequestActive_ = false;
+
+    if (!syncRequestCompleted_) {
+        result.error = "Request timeout";
+        return result;
+    }
+
+    if (!syncRequestError_.isEmpty()) {
+        result.error = syncRequestError_;
+        return result;
+    }
+
+    result.success = true;
+    result.data = syncRequestData_;
+    return result;
 }
 
 }

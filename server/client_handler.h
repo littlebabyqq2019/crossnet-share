@@ -34,6 +34,14 @@ public:
     QString getClientAddress() const;
     bool isRegistered() const { return registered_; }
 
+    // 同步请求文件数据（用于Web服务器）
+    struct FileRequestResult {
+        bool success;
+        QByteArray data;
+        QString error;
+    };
+    FileRequestResult requestFileSync(const QString& relativePath, int timeoutMs = 30000);
+
 signals:
     void disconnected(const QString& clientId);
     void logMessage(const QString& message);
@@ -69,6 +77,12 @@ private:
 
     // 转发状态：当前这个Handler正在为哪个请求者转发文件
     FileForwardState forwardState_;
+
+    // 同步文件请求状态（用于Web服务器）
+    bool syncRequestActive_;
+    QByteArray syncRequestData_;
+    bool syncRequestCompleted_;
+    QString syncRequestError_;
 };
 
 }
