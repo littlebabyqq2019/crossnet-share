@@ -11,6 +11,15 @@ namespace CrossNetShare {
 
 class Server;
 
+// 文件转发状态
+struct FileForwardState {
+    ClientHandler* requester;  // 请求者的Handler
+    QString relativePath;      // 文件相对路径
+    bool isActive;             // 是否正在转发
+
+    FileForwardState() : requester(nullptr), isActive(false) {}
+};
+
 class ClientHandler : public QObject {
     Q_OBJECT
 
@@ -47,12 +56,18 @@ private:
     void sendError(const QString& errorMsg);
     void sendFile(const QString& filePath, const FileMetadata& meta);
 
+    // 文件转发相关
+    void forwardMessage(MessageType type, const nlohmann::json& payload);
+
     QTcpSocket* socket_;
     FileIndexer* indexer_;
     Server* server_;
     QString clientId_;
     bool registered_;
     QByteArray receiveBuffer_;
+
+    // 转发状态：当前这个Handler正在为哪个请求者转发文件
+    FileForwardState forwardState_;
 };
 
 }

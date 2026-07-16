@@ -79,6 +79,26 @@ void ClientHandler::onError(QAbstractSocket::SocketError error) {
 }
 
 void ClientHandler::handleMessage(MessageType type, const nlohmann::json& payload) {
+    // 检查是否需要转发消息（用于文件传输转发）
+    if (forwardState_.isActive && forwardState_.requester) {
+        // 如果当前有活跃的转发状态，转发这些消息给请求者
+        if (type == MessageType::DOWNLOAD_RESPONSE ||
+            type == MessageType::FILE_DATA ||
+            type == MessageType::FILE_COMPLETE ||
+            type == MessageType::ERROR_MESSAGE) {
+
+            forwardState_.requester->forwardMessage(type, payload);
+
+            // 如果是完成或错误消息，清除转发状态
+            if (type == MessageType::FILE_COMPLETE || type == MessageType::ERROR_MESSAGE) {
+                emit logMessage("File forward completed for " + forwardState_.relativePath);
+                forwardState_.isActive = false;
+                forwardState_.requester = nullptr;
+            }
+            return;
+        }
+    }
+
     switch (type) {
     case MessageType::REGISTER_CLIENT:
         handleRegister(payload);
@@ -195,25 +215,48 @@ void ClientHandler::handleDownloadRequest(const nlohmann::json& payload) {
     try {
         std::string ownerClient = payload["ownerClient"].get<std::string>();
         std::string relativePath = payload["relativePath"].get<std::string>();
+        QString ownerClientId = QString::fromStdString(ownerClient);
 
-        QString filePath = indexer_->resolveFilePath(
-            QString::fromStdString(ownerClient),
-            QString::fromStdString(relativePath)
-        );
+        // 检查文件所有者是谁
+        if (ownerClientId == clientId_) {
+            // 文件所有者就是当前客户端，直接读取本地文件并发送
+            QString filePath = indexer_->resolveFilePath(ownerClientId, QString::fromStdString(relativePath));
 
-        if (filePath.isEmpty() || !QFile::exists(filePath)) {
-            sendError("File not found");
-            return;
+            if (filePath.isEmpty() || !QFile::exists(filePath)) {
+                sendError("File not found");
+                return;
+            }
+
+            FileMetadata meta;
+            meta.filename = QFileInfo(filePath).fileName().toStdString();
+            meta.relativePath = relativePath;
+            meta.size = FileUtils::getFileSize(filePath);
+            meta.ownerClient = ownerClient;
+
+            sendFile(filePath, meta);
+
+        } else if (server_) {
+            // 文件属于其他客户端，需要转发
+            ClientHandler* ownerHandler = server_->findClientHandler(ownerClientId);
+
+            if (!ownerHandler) {
+                sendError("Owner client not connected: " + ownerClientId);
+                return;
+            }
+
+            // 在文件所有者的Handler上记录转发状态
+            ownerHandler->forwardState_.requester = this;
+            ownerHandler->forwardState_.relativePath = QString::fromStdString(relativePath);
+            ownerHandler->forwardState_.isActive = true;
+
+            // 向文件所有者发送下载请求
+            ownerHandler->sendMessage(MessageType::DOWNLOAD_REQUEST, payload);
+
+            emit logMessage("Forwarding download request to " + ownerClientId + " for " + QString::fromStdString(relativePath));
+
+        } else {
+            sendError("Cannot forward request: server not available");
         }
-
-        // 构建文件元数据
-        FileMetadata meta;
-        meta.filename = QFileInfo(filePath).fileName().toStdString();
-        meta.relativePath = relativePath;
-        meta.size = FileUtils::getFileSize(filePath);
-        meta.ownerClient = ownerClient;
-
-        sendFile(filePath, meta);
 
     } catch (const std::exception& e) {
         sendError("Download failed: " + QString(e.what()));
@@ -336,6 +379,10 @@ void ClientHandler::sendFile(const QString& filePath, const FileMetadata& meta) 
 
     emit logMessage("File sent: " + QString::fromStdString(meta.filename) +
                     " (" + QString::number(totalSent) + " bytes)");
+}
+
+void ClientHandler::forwardMessage(MessageType type, const nlohmann::json& payload) {
+    sendMessage(type, payload);
 }
 
 }
