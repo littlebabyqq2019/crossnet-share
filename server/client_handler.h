@@ -10,6 +10,7 @@
 namespace CrossNetShare {
 
 class Server;
+class ClientHandler;
 
 // 文件转发状态
 struct FileForwardState {
