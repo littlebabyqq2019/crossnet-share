@@ -60,7 +60,8 @@
       "Bash(git commit -m 'Implement user management system with settings UI *)",
       "Bash(git commit -m 'Fix compilation errors in user management *)",
       "Bash(git commit -m 'Fix remaining users_ references in AuthManager *)",
-      "Bash(git commit -m 'Fix date input display and preview iframe size *)"
+      "Bash(git commit -m 'Fix date input display and preview iframe size *)",
+      "Bash(git commit -m 'Move server options to settings, auto-start server, silent registration *)"
     ]
   }
 }

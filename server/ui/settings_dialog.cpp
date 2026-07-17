@@ -1,4 +1,5 @@
 #include "settings_dialog.h"
+#include "common/autostart.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -6,6 +7,7 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QLabel>
+#include <QCoreApplication>
 
 namespace CrossNetShare {
 
@@ -18,7 +20,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 
 void SettingsDialog::setupUi() {
     setWindowTitle("服务器设置");
-    resize(700, 500);
+    resize(700, 600);
 
     // 设置字体
     QFont appFont = font();
@@ -28,6 +30,38 @@ void SettingsDialog::setupUi() {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
     mainLayout->setSpacing(16);
     mainLayout->setContentsMargins(20, 20, 20, 20);
+
+    // 服务器选项区域
+    QGroupBox* optionsGroup = new QGroupBox("服务器选项", this);
+    optionsGroup->setStyleSheet("QGroupBox { font-weight: bold; font-size: 11pt; padding-top: 16px; border: 2px solid #e5e7eb; border-radius: 8px; } "
+                                "QGroupBox::title { subcontrol-origin: margin; left: 16px; padding: 0 8px; background-color: white; }");
+    QVBoxLayout* optionsLayout = new QVBoxLayout(optionsGroup);
+    optionsLayout->setSpacing(12);
+
+    uploadEnabledCheckBox_ = new QCheckBox("允许客户端上传文件");
+    uploadEnabledCheckBox_->setChecked(true);
+    uploadEnabledCheckBox_->setStyleSheet("QCheckBox { font-weight: normal; font-size: 10pt; spacing: 8px; }");
+    optionsLayout->addWidget(uploadEnabledCheckBox_);
+
+    webEnabledCheckBox_ = new QCheckBox("启用 Web 浏览器访问");
+    webEnabledCheckBox_->setChecked(true);
+    webEnabledCheckBox_->setStyleSheet("QCheckBox { font-weight: normal; font-size: 10pt; spacing: 8px; }");
+    optionsLayout->addWidget(webEnabledCheckBox_);
+
+    autoStartCheckBox_ = new QCheckBox("Windows 开机自动启动服务器");
+    autoStartCheckBox_->setChecked(AutoStart::isAutoStartEnabled("CrossNetShareServer"));
+    autoStartCheckBox_->setStyleSheet("QCheckBox { font-weight: normal; font-size: 10pt; spacing: 8px; }");
+    connect(autoStartCheckBox_, &QCheckBox::stateChanged, this, [this](int state) {
+        bool enable = (state == Qt::Checked);
+        QString appPath = QCoreApplication::applicationFilePath();
+        if (!AutoStart::setAutoStart("CrossNetShareServer", appPath, enable)) {
+            QMessageBox::warning(this, "警告", "修改开机自启动设置失败");
+            autoStartCheckBox_->setChecked(!enable);
+        }
+    });
+    optionsLayout->addWidget(autoStartCheckBox_);
+
+    mainLayout->addWidget(optionsGroup);
 
     // 用户管理区域
     QGroupBox* userGroup = new QGroupBox("用户管理", this);
@@ -195,6 +229,18 @@ void SettingsDialog::onChangePasswordClicked() {
 
 void SettingsDialog::onRefreshUsersClicked() {
     loadUsers();
+}
+
+bool SettingsDialog::getUploadEnabled() const {
+    return uploadEnabledCheckBox_->isChecked();
+}
+
+bool SettingsDialog::getWebEnabled() const {
+    return webEnabledCheckBox_->isChecked();
+}
+
+bool SettingsDialog::getAutoStartEnabled() const {
+    return autoStartCheckBox_->isChecked();
 }
 
 }

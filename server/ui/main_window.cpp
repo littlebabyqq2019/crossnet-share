@@ -31,6 +31,13 @@ MainWindow::MainWindow(QWidget* parent)
     cacheCleanupTimer_->start(3600000);
 
     updateServerStatus();
+
+    // 自动启动服务器
+    QTimer::singleShot(500, this, [this]() {
+        if (!server_->isRunning()) {
+            onStartStopClicked();
+        }
+    });
 }
 
 MainWindow::~MainWindow() {
@@ -90,22 +97,6 @@ void MainWindow::setupUi() {
     webPortSpinBox_->setMinimumHeight(32);
     webPortSpinBox_->setStyleSheet("QSpinBox { padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; }");
     configGrid->addWidget(webPortSpinBox_, 0, 3);
-
-    uploadEnabledCheckBox_ = new QCheckBox("允许客户端上传文件");
-    uploadEnabledCheckBox_->setChecked(true);
-    uploadEnabledCheckBox_->setStyleSheet("QCheckBox { font-weight: normal; font-size: 10pt; spacing: 8px; }");
-    configGrid->addWidget(uploadEnabledCheckBox_, 1, 0, 1, 2);
-
-    webEnabledCheckBox_ = new QCheckBox("启用 Web 浏览器访问");
-    webEnabledCheckBox_->setChecked(true);
-    webEnabledCheckBox_->setStyleSheet("QCheckBox { font-weight: normal; font-size: 10pt; spacing: 8px; }");
-    configGrid->addWidget(webEnabledCheckBox_, 1, 2, 1, 2);
-
-    autoStartCheckBox_ = new QCheckBox("Windows 开机自动启动服务器");
-    autoStartCheckBox_->setChecked(AutoStart::isAutoStartEnabled("CrossNetShareServer"));
-    autoStartCheckBox_->setStyleSheet("QCheckBox { font-weight: normal; font-size: 10pt; spacing: 8px; }");
-    configGrid->addWidget(autoStartCheckBox_, 2, 0, 1, 4);
-    connect(autoStartCheckBox_, &QCheckBox::stateChanged, this, &MainWindow::onAutoStartChanged);
 
     configMainLayout->addLayout(configGrid);
 
@@ -212,8 +203,8 @@ void MainWindow::onStartStopClicked() {
     } else {
         ServerConfig config;
         config.port = portSpinBox_->value();
-        config.uploadEnabled = uploadEnabledCheckBox_->isChecked();
-        config.webEnabled = webEnabledCheckBox_->isChecked();
+        config.uploadEnabled = true;  // 默认启用上传
+        config.webEnabled = true;     // 默认启用Web
         config.webPort = webPortSpinBox_->value();
 
         if (!server_->start(config)) {
@@ -315,18 +306,6 @@ void MainWindow::appendLog(const QString& message) {
 void MainWindow::onCleanupCache() {
     DocumentConverter::cleanupCache();
     appendLog("已清理旧的预览缓存文件");
-}
-
-void MainWindow::onAutoStartChanged(int state) {
-    bool enable = (state == Qt::Checked);
-    QString appPath = QCoreApplication::applicationFilePath();
-
-    if (AutoStart::setAutoStart("CrossNetShareServer", appPath, enable)) {
-        appendLog(enable ? "已启用开机自启动" : "已禁用开机自启动");
-    } else {
-        appendLog("修改开机自启动设置失败");
-        autoStartCheckBox_->setChecked(!enable);
-    }
 }
 
 void MainWindow::onSettingsClicked() {

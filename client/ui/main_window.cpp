@@ -328,10 +328,9 @@ void MainWindow::onClientRegistered(bool success, const QString& message) {
         refreshButton_->setEnabled(true);
         downloadButton_->setEnabled(true);
         uploadButton_->setEnabled(true);
-
-        QMessageBox::information(this, "Success", "Registration successful!");
+        // 静默注册成功，不显示弹窗
     } else {
-        QMessageBox::critical(this, "Error", "Registration failed: " + message);
+        QMessageBox::critical(this, "错误", "注册失败: " + message);
     }
 }
 

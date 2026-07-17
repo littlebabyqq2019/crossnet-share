@@ -15,6 +15,14 @@ class SettingsDialog : public QDialog {
 public:
     explicit SettingsDialog(QWidget* parent = nullptr);
 
+    // 获取设置
+    bool getUploadEnabled() const;
+    bool getWebEnabled() const;
+    bool getAutoStartEnabled() const;
+
+signals:
+    void settingsChanged();
+
 private slots:
     void onAddUserClicked();
     void onRemoveUserClicked();
@@ -30,6 +38,11 @@ private:
     QPushButton* removeUserButton_;
     QPushButton* changePasswordButton_;
     QPushButton* refreshButton_;
+
+    // 服务器选项
+    QCheckBox* uploadEnabledCheckBox_;
+    QCheckBox* webEnabledCheckBox_;
+    QCheckBox* autoStartCheckBox_;
 };
 
 }
