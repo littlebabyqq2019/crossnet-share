@@ -173,6 +173,16 @@ void MainWindow::onServerStopped() {
 }
 
 void MainWindow::onClientConnected(const QString& clientId, const QString& address) {
+    // 先移除已存在的同名客户端（避免重复）
+    for (int i = 0; i < clientListWidget_->count(); ++i) {
+        QListWidgetItem* item = clientListWidget_->item(i);
+        if (item->text().startsWith(clientId + " ")) {
+            delete clientListWidget_->takeItem(i);
+            break;
+        }
+    }
+
+    // 添加新条目
     QString displayText = clientId + " (" + address + ")";
     clientListWidget_->addItem(displayText);
 }
