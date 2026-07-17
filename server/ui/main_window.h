@@ -9,6 +9,7 @@
 #include <QPushButton>
 #include <QListWidget>
 #include <QLabel>
+#include <QTimer>
 
 namespace CrossNetShare {
 
@@ -28,6 +29,7 @@ private slots:
     void onClientDisconnected(const QString& clientId);
     void onLogMessage(const QString& message);
     void onServerError(const QString& errorMsg);
+    void onCleanupCache();
 
 private:
     void setupUi();
@@ -35,6 +37,7 @@ private:
     void appendLog(const QString& message);
 
     Server* server_;
+    QTimer* cacheCleanupTimer_;
 
     // UI控件
     QSpinBox* portSpinBox_;

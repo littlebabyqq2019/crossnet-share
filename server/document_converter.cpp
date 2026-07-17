@@ -9,11 +9,18 @@
 #include <QTemporaryDir>
 #include <QTextCodec>
 #include <QUrl>
+#include <QCryptographicHash>
+#include <QDateTime>
 #ifdef Q_OS_WIN
 #include <QAxObject>
 #endif
 
 namespace CrossNetShare {
+
+#ifdef Q_OS_WIN
+QAxObject* DocumentConverter::wordApp = nullptr;
+QMutex DocumentConverter::wordMutex;
+#endif
 
 namespace {
 
@@ -61,6 +68,38 @@ QString withDetails(const QString& message, const QString& details) {
     return details.isEmpty() ? message : message + "\n" + details;
 }
 
+}
+
+void DocumentConverter::initialize() {
+#ifdef Q_OS_WIN
+    QMutexLocker locker(&wordMutex);
+    if (!wordApp) {
+        wordApp = new QAxObject("Word.Application");
+        if (!wordApp->isNull()) {
+            wordApp->setProperty("Visible", false);
+            wordApp->setProperty("DisplayAlerts", 0);
+        } else {
+            delete wordApp;
+            wordApp = nullptr;
+        }
+    }
+#endif
+
+    QDir cacheDir(QDir::temp().filePath("crossnet_preview_cache"));
+    if (!cacheDir.exists()) {
+        cacheDir.mkpath(".");
+    }
+}
+
+void DocumentConverter::cleanup() {
+#ifdef Q_OS_WIN
+    QMutexLocker locker(&wordMutex);
+    if (wordApp) {
+        wordApp->dynamicCall("Quit()");
+        delete wordApp;
+        wordApp = nullptr;
+    }
+#endif
 }
 
 DocumentConverter::PreviewResult DocumentConverter::previewFile(const QString& filePath) {
@@ -152,8 +191,26 @@ DocumentConverter::PreviewResult DocumentConverter::previewPdf(const QString& fi
 }
 
 DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& filePath) {
+    PreviewResult result;
+
+    QString cachePath = getCachePath(filePath);
+    if (isCacheValid(cachePath, filePath)) {
+        QFile cacheFile(cachePath);
+        if (cacheFile.open(QIODevice::ReadOnly)) {
+            result.success = true;
+            result.mimeType = "application/pdf";
+            result.data = cacheFile.readAll();
+            return result;
+        }
+    }
+
     PreviewResult wordResult = convertWordWithMicrosoftWord(filePath);
     if (wordResult.success) {
+        QFile cacheFile(cachePath);
+        if (cacheFile.open(QIODevice::WriteOnly)) {
+            cacheFile.write(wordResult.data);
+            cacheFile.close();
+        }
         return wordResult;
     }
 
@@ -166,7 +223,13 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
     }
 
     PreviewResult libreOfficeResult = convertWordWithLibreOffice(filePath);
-    if (!libreOfficeResult.success && !wordResult.error.isEmpty()) {
+    if (libreOfficeResult.success) {
+        QFile cacheFile(cachePath);
+        if (cacheFile.open(QIODevice::WriteOnly)) {
+            cacheFile.write(libreOfficeResult.data);
+            cacheFile.close();
+        }
+    } else if (!wordResult.error.isEmpty()) {
         libreOfficeResult.error = "Microsoft Word conversion failed: " + wordResult.error + "\nLibreOffice fallback failed: " + libreOfficeResult.error;
     }
     return libreOfficeResult;
@@ -179,6 +242,14 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
     result.error = "Microsoft Word COM conversion is only available on Windows";
     return result;
 #else
+    QMutexLocker locker(&wordMutex);
+
+    if (!wordApp || wordApp->isNull()) {
+        result.success = false;
+        result.error = "Microsoft Word is not initialized. Call DocumentConverter::initialize() first.";
+        return result;
+    }
+
     QTemporaryDir tempDir(QDir::temp().filePath("crossnet_word_preview_XXXXXX"));
     if (!tempDir.isValid()) {
         result.success = false;
@@ -190,34 +261,17 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
     QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
     QString nativePdfPath = QDir::toNativeSeparators(pdfPath);
 
-    QAxObject word("Word.Application");
-    if (word.isNull()) {
-        result.success = false;
-        result.error = "Microsoft Word is not installed or COM automation is unavailable";
-        return result;
-    }
-
-    word.setProperty("Visible", false);
-    word.setProperty("DisplayAlerts", 0);
-
-    QAxObject* documents = word.querySubObject("Documents");
+    QAxObject* documents = wordApp->querySubObject("Documents");
     if (!documents) {
-        word.dynamicCall("Quit()");
         result.success = false;
         result.error = "Failed to access Microsoft Word Documents collection";
         return result;
     }
 
-    QVariant filename(nativeInputPath);
-    QVariant confirmConversions(false);
-    QVariant readOnly(true);
-    QVariant addToRecentFiles(false);
-
     QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
         nativeInputPath, false, true, false);
 
     if (!document) {
-        word.dynamicCall("Quit()");
         result.success = false;
         result.error = "Microsoft Word failed to open the document";
         return result;
@@ -227,7 +281,6 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
         nativePdfPath, 17);
 
     document->dynamicCall("Close(bool)", false);
-    word.dynamicCall("Quit()");
 
     QFile pdfFile(pdfPath);
     if (!pdfFile.open(QIODevice::ReadOnly)) {
@@ -361,6 +414,48 @@ QString DocumentConverter::findLibreOffice() {
 QByteArray DocumentConverter::htmlEscape(const QString& text) {
     QString escaped = text.toHtmlEscaped();
     return escaped.toUtf8();
+}
+
+QString DocumentConverter::getCachePath(const QString& filePath) {
+    QFileInfo fileInfo(filePath);
+    QString hash = QString::fromUtf8(QCryptographicHash::hash(
+        fileInfo.absoluteFilePath().toUtf8(),
+        QCryptographicHash::Md5).toHex());
+
+    QDir cacheDir(QDir::temp().filePath("crossnet_preview_cache"));
+    return cacheDir.filePath(hash + ".pdf");
+}
+
+bool DocumentConverter::isCacheValid(const QString& cachePath, const QString& originalPath) {
+    QFileInfo cacheInfo(cachePath);
+    QFileInfo originalInfo(originalPath);
+
+    if (!cacheInfo.exists()) {
+        return false;
+    }
+
+    if (originalInfo.lastModified() > cacheInfo.lastModified()) {
+        return false;
+    }
+
+    return true;
+}
+
+void DocumentConverter::cleanupCache() {
+    QDir cacheDir(QDir::temp().filePath("crossnet_preview_cache"));
+    if (!cacheDir.exists()) {
+        return;
+    }
+
+    QFileInfoList files = cacheDir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+    QDateTime now = QDateTime::currentDateTime();
+
+    for (const QFileInfo& fileInfo : files) {
+        qint64 ageInDays = fileInfo.lastModified().daysTo(now);
+        if (ageInDays > 7) {
+            QFile::remove(fileInfo.absoluteFilePath());
+        }
+    }
 }
 
 }

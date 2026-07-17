@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "../document_converter.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -11,6 +12,7 @@ namespace CrossNetShare {
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , server_(new Server(this))
+    , cacheCleanupTimer_(new QTimer(this))
 {
     setupUi();
 
@@ -20,6 +22,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(server_, &Server::clientDisconnected, this, &MainWindow::onClientDisconnected);
     connect(server_, &Server::logMessage, this, &MainWindow::onLogMessage);
     connect(server_, &Server::error, this, &MainWindow::onServerError);
+
+    connect(cacheCleanupTimer_, &QTimer::timeout, this, &MainWindow::onCleanupCache);
+    cacheCleanupTimer_->start(3600000);
 
     updateServerStatus();
 }
@@ -214,6 +219,11 @@ void MainWindow::appendLog(const QString& message) {
 
     // 自动滚动到底部
     logTextEdit_->moveCursor(QTextCursor::End);
+}
+
+void MainWindow::onCleanupCache() {
+    DocumentConverter::cleanupCache();
+    appendLog("Cleaned up old preview cache files");
 }
 
 }
