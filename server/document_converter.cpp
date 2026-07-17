@@ -212,35 +212,9 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
     QVariant confirmConversions(false);
     QVariant readOnly(true);
     QVariant addToRecentFiles(false);
-    QVariant passwordDocument("");
-    QVariant passwordTemplate("");
-    QVariant revert(false);
-    QVariant writePasswordDocument("");
-    QVariant writePasswordTemplate("");
-    QVariant format(QVariant());
-    QVariant encoding(QVariant());
-    QVariant visible(false);
-    QVariant openAndRepair(true);
-    QVariant documentDirection(0);
-    QVariant noEncodingDialog(true);
 
-    QAxObject* document = documents->querySubObject(
-        "Open(const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&)",
-        filename,
-        confirmConversions,
-        readOnly,
-        addToRecentFiles,
-        passwordDocument,
-        passwordTemplate,
-        revert,
-        writePasswordDocument,
-        writePasswordTemplate,
-        format,
-        encoding,
-        visible,
-        openAndRepair,
-        documentDirection,
-        noEncodingDialog);
+    QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
+        nativeInputPath, false, true, false);
 
     if (!document) {
         word.dynamicCall("Quit()");
@@ -249,39 +223,10 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
         return result;
     }
 
-    QVariant outputFileName(nativePdfPath);
-    QVariant exportFormat(17);
-    QVariant openAfterExport(false);
-    QVariant optimizeFor(0);
-    QVariant range(0);
-    QVariant from(1);
-    QVariant to(1);
-    QVariant item(0);
-    QVariant includeDocProps(true);
-    QVariant keepIRM(true);
-    QVariant createBookmarks(0);
-    QVariant docStructureTags(true);
-    QVariant bitmapMissingFonts(true);
-    QVariant useISO19005_1(false);
+    document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
+        nativePdfPath, 17);
 
-    document->dynamicCall(
-        "ExportAsFixedFormat(const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&)",
-        outputFileName,
-        exportFormat,
-        openAfterExport,
-        optimizeFor,
-        range,
-        from,
-        to,
-        item,
-        includeDocProps,
-        keepIRM,
-        createBookmarks,
-        docStructureTags,
-        bitmapMissingFonts,
-        useISO19005_1);
-
-    document->dynamicCall("Close(const QVariant&)", QVariant(false));
+    document->dynamicCall("Close(bool)", false);
     word.dynamicCall("Quit()");
 
     QFile pdfFile(pdfPath);
