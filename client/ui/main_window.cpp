@@ -170,12 +170,14 @@ void MainWindow::setupUi() {
     filterLayout->addWidget(new QLabel("起始日期:"));
     startDateEdit_ = new QDateEdit();
     startDateEdit_->setCalendarPopup(true);
+    startDateEdit_->setDisplayFormat("yyyy/MM/dd");
     startDateEdit_->setDate(QDate::currentDate().addMonths(-1));
     filterLayout->addWidget(startDateEdit_);
 
     filterLayout->addWidget(new QLabel("结束日期:"));
     endDateEdit_ = new QDateEdit();
     endDateEdit_->setCalendarPopup(true);
+    endDateEdit_->setDisplayFormat("yyyy/MM/dd");
     endDateEdit_->setDate(QDate::currentDate());
     filterLayout->addWidget(endDateEdit_);
 
