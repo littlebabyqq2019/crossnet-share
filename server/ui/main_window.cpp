@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "settings_dialog.h"
 #include "../document_converter.h"
 #include "common/autostart.h"
 #include <QVBoxLayout>
@@ -130,6 +131,15 @@ void MainWindow::setupUi() {
     refreshButton_->setMinimumHeight(42);
     connect(refreshButton_, &QPushButton::clicked, this, &MainWindow::onRefreshIndexClicked);
     buttonLayout->addWidget(refreshButton_);
+
+    QPushButton* settingsButton = new QPushButton("设置");
+    settingsButton->setStyleSheet(
+        "QPushButton { padding: 10px 24px; font-size: 10pt; background-color: white; border: 1px solid #d1d5db; border-radius: 6px; } "
+        "QPushButton:hover { background-color: #f3f4f6; }"
+    );
+    settingsButton->setMinimumHeight(42);
+    connect(settingsButton, &QPushButton::clicked, this, &MainWindow::onSettingsClicked);
+    buttonLayout->addWidget(settingsButton);
 
     buttonLayout->addStretch();
     configMainLayout->addLayout(buttonLayout);
@@ -317,6 +327,11 @@ void MainWindow::onAutoStartChanged(int state) {
         appendLog("修改开机自启动设置失败");
         autoStartCheckBox_->setChecked(!enable);
     }
+}
+
+void MainWindow::onSettingsClicked() {
+    SettingsDialog dialog(this);
+    dialog.exec();
 }
 
 }

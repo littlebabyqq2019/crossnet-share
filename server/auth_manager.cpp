@@ -1,4 +1,5 @@
 #include "auth_manager.h"
+#include "user_manager.h"
 #include <nlohmann/json.hpp>
 #include <QFile>
 #include <QJsonDocument>
@@ -11,87 +12,34 @@ AuthManager::AuthManager(QObject* parent)
     : QObject(parent)
     , sessionTimeout_(1800)
 {
-    addUser("admin", "admin123", "admin");
+    // 使用 UserManager 替代本地用户存储
 }
 
 AuthManager::~AuthManager() {
 }
 
 bool AuthManager::loadUsers(const QString& configFile) {
-    QFile file(configFile);
-    if (!file.exists()) {
-        emit logMessage("User config not found, creating default admin/admin123");
-        return saveUsers(configFile);
-    }
-
-    if (!file.open(QIODevice::ReadOnly)) {
-        emit logMessage("Failed to open user config: " + configFile);
-        return false;
-    }
-
-    try {
-        QByteArray data = file.readAll();
-        auto root = nlohmann::json::parse(data.constData(), data.constData() + data.size());
-
-        users_.clear();
-        sessionTimeout_ = root.value("sessionTimeout", 1800);
-
-        for (const auto& userJson : root["users"]) {
-            User user;
-            user.username = QString::fromStdString(userJson["username"].get<std::string>());
-            user.passwordHash = QString::fromStdString(userJson["passwordHash"].get<std::string>());
-            user.role = QString::fromStdString(userJson.value("role", "user"));
-            users_[user.username] = user;
-        }
-
-        if (users_.isEmpty()) {
-            addUser("admin", "admin123", "admin");
-        }
-
-        emit logMessage("Loaded " + QString::number(users_.size()) + " web users");
+    // 从文件加载用户到 UserManager
+    if (UserManager::instance()->loadFromFile(configFile)) {
+        emit logMessage("已从配置文件加载用户");
         return true;
-    } catch (const std::exception& e) {
-        emit logMessage("Failed to parse user config: " + QString::fromUtf8(e.what()));
-        users_.clear();
-        addUser("admin", "admin123", "admin");
-        return false;
+    } else {
+        emit logMessage("用户配置文件未找到，使用默认管理员账户 admin/admin123");
+        return saveUsers(configFile);
     }
 }
 
 bool AuthManager::saveUsers(const QString& configFile) {
-    nlohmann::json root;
-    root["sessionTimeout"] = sessionTimeout_;
-    root["users"] = nlohmann::json::array();
-
-    for (const User& user : users_) {
-        nlohmann::json item;
-        item["username"] = user.username.toStdString();
-        item["passwordHash"] = user.passwordHash.toStdString();
-        item["role"] = user.role.toStdString();
-        root["users"].push_back(item);
-    }
-
-    QFile file(configFile);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        emit logMessage("Failed to save user config: " + configFile);
-        return false;
-    }
-
-    QByteArray data = QByteArray::fromStdString(root.dump(2));
-    return file.write(data) == data.size();
+    // 保存用户到文件
+    return UserManager::instance()->saveToFile(configFile);
 }
 
 QString AuthManager::authenticate(const QString& username, const QString& password) {
     cleanupExpiredSessions();
 
-    if (!users_.contains(username)) {
-        emit logMessage("Web login failed for unknown user: " + username);
-        return QString();
-    }
-
-    const User& user = users_[username];
-    if (hashPassword(password) != user.passwordHash) {
-        emit logMessage("Web login failed for user: " + username);
+    // 使用 UserManager 进行认证
+    if (!UserManager::instance()->authenticate(username, password)) {
+        emit logMessage("Web 登录失败，用户: " + username);
         return QString();
     }
 
@@ -104,7 +52,7 @@ QString AuthManager::authenticate(const QString& username, const QString& passwo
     sessions_[token] = session;
 
     emit userLoggedIn(username);
-    emit logMessage("Web user logged in: " + username);
+    emit logMessage("Web 用户已登录: " + username);
     return token;
 }
 

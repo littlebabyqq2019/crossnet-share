@@ -58,10 +58,14 @@ add_executable(CrossNetShareServer
     server/web_server.h
     server/auth_manager.cpp
     server/auth_manager.h
+    server/user_manager.cpp
+    server/user_manager.h
     server/document_converter.cpp
     server/document_converter.h
     server/ui/main_window.cpp
     server/ui/main_window.h
+    server/ui/settings_dialog.cpp
+    server/ui/settings_dialog.h
 )
 
 target_link_libraries(CrossNetShareServer

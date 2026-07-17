@@ -31,6 +31,7 @@ private slots:
     void onServerError(const QString& errorMsg);
     void onCleanupCache();
     void onAutoStartChanged(int state);
+    void onSettingsClicked();
 
 private:
     void setupUi();
