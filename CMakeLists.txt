@@ -32,6 +32,8 @@ add_library(common STATIC
     common/file_utils.cpp
     common/file_utils.h
     common/message.h
+    common/autostart.cpp
+    common/autostart.h
 )
 
 target_link_libraries(common

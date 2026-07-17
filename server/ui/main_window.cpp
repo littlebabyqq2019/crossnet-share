@@ -1,11 +1,13 @@
 #include "main_window.h"
 #include "../document_converter.h"
+#include "common/autostart.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
 #include <QDateTime>
 #include <QMessageBox>
 #include <QNetworkInterface>
+#include <QCoreApplication>
 
 namespace CrossNetShare {
 
@@ -72,6 +74,11 @@ void MainWindow::setupUi() {
     refreshButton_ = new QPushButton("Refresh Index");
     connect(refreshButton_, &QPushButton::clicked, this, &MainWindow::onRefreshIndexClicked);
     configLayout->addWidget(refreshButton_);
+
+    autoStartCheckBox_ = new QCheckBox("Start on Windows startup");
+    autoStartCheckBox_->setChecked(AutoStart::isAutoStartEnabled("CrossNetShareServer"));
+    connect(autoStartCheckBox_, &QCheckBox::stateChanged, this, &MainWindow::onAutoStartChanged);
+    configLayout->addWidget(autoStartCheckBox_);
 
     configLayout->addStretch();
 
@@ -234,6 +241,18 @@ void MainWindow::appendLog(const QString& message) {
 void MainWindow::onCleanupCache() {
     DocumentConverter::cleanupCache();
     appendLog("Cleaned up old preview cache files");
+}
+
+void MainWindow::onAutoStartChanged(int state) {
+    bool enable = (state == Qt::Checked);
+    QString appPath = QCoreApplication::applicationFilePath();
+
+    if (AutoStart::setAutoStart("CrossNetShareServer", appPath, enable)) {
+        appendLog(enable ? "Auto-start enabled" : "Auto-start disabled");
+    } else {
+        appendLog("Failed to change auto-start setting");
+        autoStartCheckBox_->setChecked(!enable);
+    }
 }
 
 }

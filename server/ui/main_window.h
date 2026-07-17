@@ -30,6 +30,7 @@ private slots:
     void onLogMessage(const QString& message);
     void onServerError(const QString& errorMsg);
     void onCleanupCache();
+    void onAutoStartChanged(int state);
 
 private:
     void setupUi();
@@ -44,6 +45,7 @@ private:
     QCheckBox* uploadEnabledCheckBox_;
     QCheckBox* webEnabledCheckBox_;
     QSpinBox* webPortSpinBox_;
+    QCheckBox* autoStartCheckBox_;
     QPushButton* startStopButton_;
     QPushButton* refreshButton_;
     QLabel* statusLabel_;

@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "common/autostart.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -9,6 +10,7 @@
 #include <QTreeWidgetItem>
 #include <QStandardPaths>
 #include <QDir>
+#include <QCoreApplication>
 
 namespace CrossNetShare {
 
@@ -41,7 +43,28 @@ MainWindow::MainWindow(QWidget* parent)
     QDir().mkpath(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation));
 
     if (client_->loadConfig(configPath)) {
-        onLogMessage("Configuration loaded, will auto-connect and register");
+        onLogMessage("Configuration loaded successfully");
+
+        // 自动连接到服务器
+        QString host = client_->getServerHost();
+        quint16 port = client_->getServerPort();
+        QString clientId = client_->getClientId();
+        QString sharePath = client_->getSharePath();
+
+        if (!host.isEmpty() && port > 0 && !clientId.isEmpty() && !sharePath.isEmpty()) {
+            onLogMessage("Auto-connecting to " + host + ":" + QString::number(port));
+
+            // 更新UI显示
+            serverAddressEdit_->setText(host);
+            serverPortSpinBox_->setValue(port);
+            clientIdEdit_->setText(clientId);
+            sharePathEdit_->setText(sharePath);
+
+            // 连接
+            if (client_->connectToServer(host, port)) {
+                onLogMessage("Auto-connect initiated, will auto-register after connection");
+            }
+        }
     }
 
     updateConnectionStatus();
@@ -82,6 +105,11 @@ void MainWindow::setupUi() {
 
     connectionStatusLabel_ = new QLabel("Disconnected");
     connectionLayout->addWidget(connectionStatusLabel_);
+
+    autoStartCheckBox_ = new QCheckBox("Start on Windows startup");
+    autoStartCheckBox_->setChecked(AutoStart::isAutoStartEnabled("CrossNetShareClient"));
+    connect(autoStartCheckBox_, &QCheckBox::stateChanged, this, &MainWindow::onAutoStartChanged);
+    connectionLayout->addWidget(autoStartCheckBox_);
 
     connectionLayout->addStretch();
 
@@ -245,6 +273,15 @@ void MainWindow::onRegisterClicked() {
 void MainWindow::onClientConnected() {
     updateConnectionStatus();
     registerButton_->setEnabled(true);
+
+    // 如果有保存的配置，自动注册
+    QString clientId = client_->getClientId();
+    QString sharePath = client_->getSharePath();
+
+    if (!clientId.isEmpty() && !sharePath.isEmpty()) {
+        onLogMessage("Auto-registering with clientId: " + clientId);
+        client_->registerClient(clientId, sharePath);
+    }
 }
 
 void MainWindow::onClientDisconnected() {
@@ -429,6 +466,18 @@ void MainWindow::updateFileTree(const std::vector<FileMetadata>& files) {
     }
 
     appendLog("Received " + QString::number(files.size()) + " files");
+}
+
+void MainWindow::onAutoStartChanged(int state) {
+    bool enable = (state == Qt::Checked);
+    QString appPath = QCoreApplication::applicationFilePath();
+
+    if (AutoStart::setAutoStart("CrossNetShareClient", appPath, enable)) {
+        appendLog(enable ? "Auto-start enabled" : "Auto-start disabled");
+    } else {
+        appendLog("Failed to change auto-start setting");
+        autoStartCheckBox_->setChecked(!enable);
+    }
 }
 
 }

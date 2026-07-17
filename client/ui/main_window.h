@@ -12,6 +12,7 @@
 #include <QTreeWidget>
 #include <QProgressBar>
 #include <QComboBox>
+#include <QCheckBox>
 
 namespace CrossNetShare {
 
@@ -52,6 +53,7 @@ private slots:
     // 日志
     void onLogMessage(const QString& message);
     void onError(const QString& errorMsg);
+    void onAutoStartChanged(int state);
 
 private:
     void setupUi();
@@ -67,6 +69,7 @@ private:
     QSpinBox* serverPortSpinBox_;
     QPushButton* connectButton_;
     QLabel* connectionStatusLabel_;
+    QCheckBox* autoStartCheckBox_;
 
     // UI控件 - 注册区域
     QLineEdit* clientIdEdit_;

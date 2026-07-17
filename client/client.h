@@ -24,6 +24,12 @@ public:
 
     bool isConnected() const { return connected_; }
 
+    // 获取配置信息
+    QString getServerHost() const { return serverHost_; }
+    quint16 getServerPort() const { return serverPort_; }
+    QString getClientId() const { return clientId_; }
+    QString getSharePath() const { return sharePath_; }
+
     // 注册客户端
     void registerClient(const QString& clientId, const QString& sharePath);
 
