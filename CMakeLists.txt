@@ -11,7 +11,11 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # 查找依赖库
-find_package(Qt5 COMPONENTS Core Widgets Network REQUIRED)
+if(WIN32)
+    find_package(Qt5 COMPONENTS Core Widgets Network AxContainer REQUIRED)
+else()
+    find_package(Qt5 COMPONENTS Core Widgets Network REQUIRED)
+endif()
 
 # 第三方库 - nlohmann/json (header-only)
 include(FetchContent)
@@ -85,7 +89,7 @@ target_link_libraries(CrossNetShareClient
 
 # Windows特定设置
 if(WIN32)
-    target_link_libraries(CrossNetShareServer PRIVATE ws2_32)
+    target_link_libraries(CrossNetShareServer PRIVATE ws2_32 Qt5::AxContainer)
     target_link_libraries(CrossNetShareClient PRIVATE ws2_32)
 
     # GUI应用（不显示控制台）

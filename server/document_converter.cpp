@@ -9,6 +9,9 @@
 #include <QTemporaryDir>
 #include <QTextCodec>
 #include <QUrl>
+#ifdef Q_OS_WIN
+#include <QAxObject>
+#endif
 
 namespace CrossNetShare {
 
@@ -149,20 +152,154 @@ DocumentConverter::PreviewResult DocumentConverter::previewPdf(const QString& fi
 }
 
 DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& filePath) {
-    PreviewResult result;
+    PreviewResult wordResult = convertWordWithMicrosoftWord(filePath);
+    if (wordResult.success) {
+        return wordResult;
+    }
 
-    // 检测 WordML 格式（Word 2003 XML）
     QFile checkFile(filePath);
     if (checkFile.open(QIODevice::ReadOnly)) {
         QByteArray header = checkFile.read(512);
         if (header.contains("<?xml") && header.contains("wordDocument")) {
-            result.success = false;
-            result.error = "WordML format (.doc XML) preview is not supported due to conversion issues. Please download the file to view it.";
-            return result;
+            return wordResult;
         }
-        checkFile.close();
     }
 
+    PreviewResult libreOfficeResult = convertWordWithLibreOffice(filePath);
+    if (!libreOfficeResult.success && !wordResult.error.isEmpty()) {
+        libreOfficeResult.error = "Microsoft Word conversion failed: " + wordResult.error + "\nLibreOffice fallback failed: " + libreOfficeResult.error;
+    }
+    return libreOfficeResult;
+}
+
+DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord(const QString& filePath) {
+    PreviewResult result;
+#ifndef Q_OS_WIN
+    result.success = false;
+    result.error = "Microsoft Word COM conversion is only available on Windows";
+    return result;
+#else
+    QTemporaryDir tempDir(QDir::temp().filePath("crossnet_word_preview_XXXXXX"));
+    if (!tempDir.isValid()) {
+        result.success = false;
+        result.error = "Failed to create temporary Word conversion directory";
+        return result;
+    }
+
+    QString pdfPath = tempDir.path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf";
+    QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
+    QString nativePdfPath = QDir::toNativeSeparators(pdfPath);
+
+    QAxObject word("Word.Application");
+    if (word.isNull()) {
+        result.success = false;
+        result.error = "Microsoft Word is not installed or COM automation is unavailable";
+        return result;
+    }
+
+    word.setProperty("Visible", false);
+    word.setProperty("DisplayAlerts", 0);
+
+    QAxObject* documents = word.querySubObject("Documents");
+    if (!documents) {
+        word.dynamicCall("Quit()");
+        result.success = false;
+        result.error = "Failed to access Microsoft Word Documents collection";
+        return result;
+    }
+
+    QVariant filename(nativeInputPath);
+    QVariant confirmConversions(false);
+    QVariant readOnly(true);
+    QVariant addToRecentFiles(false);
+    QVariant passwordDocument("");
+    QVariant passwordTemplate("");
+    QVariant revert(false);
+    QVariant writePasswordDocument("");
+    QVariant writePasswordTemplate("");
+    QVariant format(QVariant());
+    QVariant encoding(QVariant());
+    QVariant visible(false);
+    QVariant openAndRepair(true);
+    QVariant documentDirection(0);
+    QVariant noEncodingDialog(true);
+
+    QAxObject* document = documents->querySubObject(
+        "Open(const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&)",
+        filename,
+        confirmConversions,
+        readOnly,
+        addToRecentFiles,
+        passwordDocument,
+        passwordTemplate,
+        revert,
+        writePasswordDocument,
+        writePasswordTemplate,
+        format,
+        encoding,
+        visible,
+        openAndRepair,
+        documentDirection,
+        noEncodingDialog);
+
+    if (!document) {
+        word.dynamicCall("Quit()");
+        result.success = false;
+        result.error = "Microsoft Word failed to open the document";
+        return result;
+    }
+
+    QVariant outputFileName(nativePdfPath);
+    QVariant exportFormat(17);
+    QVariant openAfterExport(false);
+    QVariant optimizeFor(0);
+    QVariant range(0);
+    QVariant from(1);
+    QVariant to(1);
+    QVariant item(0);
+    QVariant includeDocProps(true);
+    QVariant keepIRM(true);
+    QVariant createBookmarks(0);
+    QVariant docStructureTags(true);
+    QVariant bitmapMissingFonts(true);
+    QVariant useISO19005_1(false);
+
+    document->dynamicCall(
+        "ExportAsFixedFormat(const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&, const QVariant&)",
+        outputFileName,
+        exportFormat,
+        openAfterExport,
+        optimizeFor,
+        range,
+        from,
+        to,
+        item,
+        includeDocProps,
+        keepIRM,
+        createBookmarks,
+        docStructureTags,
+        bitmapMissingFonts,
+        useISO19005_1);
+
+    document->dynamicCall("Close(const QVariant&)", QVariant(false));
+    word.dynamicCall("Quit()");
+
+    QFile pdfFile(pdfPath);
+    if (!pdfFile.open(QIODevice::ReadOnly)) {
+        result.success = false;
+        result.error = "Microsoft Word did not generate a PDF file";
+        return result;
+    }
+
+    result.success = true;
+    result.mimeType = "application/pdf";
+    result.data = pdfFile.readAll();
+    return result;
+#endif
+}
+
+DocumentConverter::PreviewResult DocumentConverter::convertWordWithLibreOffice(const QString& filePath) {
+    PreviewResult result;
     QString libreOffice = findLibreOffice();
     if (libreOffice.isEmpty()) {
         result.success = false;
