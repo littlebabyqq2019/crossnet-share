@@ -222,14 +222,12 @@ void MainWindow::onServerStarted() {
     updateServerStatus();
     portSpinBox_->setEnabled(false);
     webPortSpinBox_->setEnabled(false);
-    webEnabledCheckBox_->setEnabled(false);
 }
 
 void MainWindow::onServerStopped() {
     updateServerStatus();
     portSpinBox_->setEnabled(true);
     webPortSpinBox_->setEnabled(true);
-    webEnabledCheckBox_->setEnabled(true);
     clientListWidget_->clear();
 }
 
