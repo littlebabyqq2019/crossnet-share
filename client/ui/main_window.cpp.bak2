@@ -77,39 +77,23 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::setupUi() {
-    setWindowTitle("CrossNetShare 客户端");
-    resize(1000, 800);
-
-    // 设置全局字体
-    QFont appFont = font();
-    appFont.setPointSize(10);
-    appFont.setFamily("Microsoft YaHei UI, Segoe UI");
-    setFont(appFont);
+    setWindowTitle("CrossNetShare Client");
+    resize(900, 700);
 
     QWidget* centralWidget = new QWidget(this);
-    centralWidget->setStyleSheet(
-        "QGroupBox { font-weight: bold; font-size: 11pt; padding-top: 16px; margin-top: 8px; border: 2px solid #e5e7eb; border-radius: 8px; } "
-        "QGroupBox::title { subcontrol-origin: margin; left: 16px; padding: 0 8px; background-color: white; } "
-        "QPushButton { padding: 8px 16px; font-size: 10pt; border: 1px solid #d1d5db; border-radius: 6px; min-height: 32px; } "
-        "QPushButton:hover { background-color: #f3f4f6; } "
-        "QLineEdit, QSpinBox { padding: 6px; border: 1px solid #d1d5db; border-radius: 4px; min-height: 28px; } "
-        "QLabel { font-size: 10pt; }"
-    );
     setCentralWidget(centralWidget);
 
     QVBoxLayout* mainLayout = new QVBoxLayout(centralWidget);
-    mainLayout->setSpacing(14);
-    mainLayout->setContentsMargins(16, 16, 16, 16);
 
     // 连接配置区域
-    QGroupBox* connectionGroup = new QGroupBox("服务器连接", this);
+    QGroupBox* connectionGroup = new QGroupBox("Server Connection", this);
     QHBoxLayout* connectionLayout = new QHBoxLayout(connectionGroup);
 
-    connectionLayout->addWidget(new QLabel("服务器地址:"));
+    connectionLayout->addWidget(new QLabel("Server:"));
     serverAddressEdit_ = new QLineEdit("127.0.0.1");
     connectionLayout->addWidget(serverAddressEdit_);
 
-    connectionLayout->addWidget(new QLabel("端口:"));
+    connectionLayout->addWidget(new QLabel("Port:"));
     serverPortSpinBox_ = new QSpinBox();
     serverPortSpinBox_->setRange(1024, 65535);
     serverPortSpinBox_->setValue(8888);
@@ -122,7 +106,7 @@ void MainWindow::setupUi() {
     connectionStatusLabel_ = new QLabel("Disconnected");
     connectionLayout->addWidget(connectionStatusLabel_);
 
-    autoStartCheckBox_ = new QCheckBox("Windows 开机自动启动");
+    autoStartCheckBox_ = new QCheckBox("Start on Windows startup");
     autoStartCheckBox_->setChecked(AutoStart::isAutoStartEnabled("CrossNetShareClient"));
     connect(autoStartCheckBox_, &QCheckBox::stateChanged, this, &MainWindow::onAutoStartChanged);
     connectionLayout->addWidget(autoStartCheckBox_);
@@ -132,17 +116,17 @@ void MainWindow::setupUi() {
     mainLayout->addWidget(connectionGroup);
 
     // 客户端注册区域
-    QGroupBox* registerGroup = new QGroupBox("客户端注册", this);
+    QGroupBox* registerGroup = new QGroupBox("Client Registration", this);
     QHBoxLayout* registerLayout = new QHBoxLayout(registerGroup);
 
-    registerLayout->addWidget(new QLabel("客户端ID:"));
+    registerLayout->addWidget(new QLabel("Client ID:"));
     clientIdEdit_ = new QLineEdit();
-    clientIdEdit_->setPlaceholderText("例如: ClientB 或 ClientC");
+    clientIdEdit_->setPlaceholderText("e.g., ClientB or ClientC");
     registerLayout->addWidget(clientIdEdit_);
 
-    registerLayout->addWidget(new QLabel("共享目录:"));
+    registerLayout->addWidget(new QLabel("Share Path:"));
     sharePathEdit_ = new QLineEdit();
-    sharePathEdit_->setPlaceholderText("选择要共享的文件夹");
+    sharePathEdit_->setPlaceholderText("Select a folder to share");
     registerLayout->addWidget(sharePathEdit_);
 
     browseSharePathButton_ = new QPushButton("Browse...");
@@ -157,23 +141,23 @@ void MainWindow::setupUi() {
     mainLayout->addWidget(registerGroup);
 
     // 文件浏览区域
-    QGroupBox* browseGroup = new QGroupBox("浏览文件", this);
+    QGroupBox* browseGroup = new QGroupBox("Browse Files", this);
     QVBoxLayout* browseLayout = new QVBoxLayout(browseGroup);
 
     // 筛选控件
     QHBoxLayout* filterLayout = new QHBoxLayout();
-    filterLayout->addWidget(new QLabel("目标客户端:"));
+    filterLayout->addWidget(new QLabel("Target Client:"));
     targetClientCombo_ = new QComboBox();
-    targetClientCombo_->addItem("所有客户端", "");
+    targetClientCombo_->addItem("All Clients", "");
     filterLayout->addWidget(targetClientCombo_);
 
-    filterLayout->addWidget(new QLabel("起始日期:"));
+    filterLayout->addWidget(new QLabel("From:"));
     startDateEdit_ = new QDateEdit();
     startDateEdit_->setCalendarPopup(true);
     startDateEdit_->setDate(QDate::currentDate().addMonths(-1));
     filterLayout->addWidget(startDateEdit_);
 
-    filterLayout->addWidget(new QLabel("结束日期:"));
+    filterLayout->addWidget(new QLabel("To:"));
     endDateEdit_ = new QDateEdit();
     endDateEdit_->setCalendarPopup(true);
     endDateEdit_->setDate(QDate::currentDate());
@@ -184,13 +168,13 @@ void MainWindow::setupUi() {
     connect(refreshButton_, &QPushButton::clicked, this, &MainWindow::onRefreshFilesClicked);
     filterLayout->addWidget(refreshButton_);
 
-    QPushButton* selectAllButton = new QPushButton("全选");
+    QPushButton* selectAllButton = new QPushButton("Select All");
     connect(selectAllButton, &QPushButton::clicked, this, [this]() {
         fileTreeWidget_->selectAll();
     });
     filterLayout->addWidget(selectAllButton);
 
-    QPushButton* deselectAllButton = new QPushButton("取消全选");
+    QPushButton* deselectAllButton = new QPushButton("Deselect All");
     connect(deselectAllButton, &QPushButton::clicked, this, [this]() {
         fileTreeWidget_->clearSelection();
     });
@@ -432,14 +416,14 @@ void MainWindow::onError(const QString& errorMsg) {
 
 void MainWindow::updateConnectionStatus() {
     if (client_->isConnected()) {
-        connectButton_->setText("断开");
-        connectionStatusLabel_->setText("已连接");
+        connectButton_->setText("Disconnect");
+        connectionStatusLabel_->setText("Connected");
         connectionStatusLabel_->setStyleSheet("QLabel { color: green; font-weight: bold; }");
         serverAddressEdit_->setEnabled(false);
         serverPortSpinBox_->setEnabled(false);
     } else {
-        connectButton_->setText("连接");
-        connectionStatusLabel_->setText("未连接");
+        connectButton_->setText("Connect");
+        connectionStatusLabel_->setText("Disconnected");
         connectionStatusLabel_->setStyleSheet("QLabel { color: red; }");
         serverAddressEdit_->setEnabled(true);
         serverPortSpinBox_->setEnabled(true);
@@ -462,7 +446,7 @@ void MainWindow::updateFileTree(const std::vector<FileMetadata>& files) {
     }
 
     targetClientCombo_->clear();
-    targetClientCombo_->addItem("所有客户端", "");
+    targetClientCombo_->addItem("All Clients", "");
     for (const QString& client : clients) {
         targetClientCombo_->addItem(client, client);
     }

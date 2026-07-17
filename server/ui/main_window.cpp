@@ -3,6 +3,7 @@
 #include "common/autostart.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QDateTime>
 #include <QMessageBox>
@@ -35,64 +36,117 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::setupUi() {
-    setWindowTitle("CrossNetShare Server");
-    resize(800, 600);
+    setWindowTitle("CrossNetShare 服务器");
+    resize(980, 800);
+
+    // 设置全局字体
+    QFont appFont = font();
+    appFont.setPointSize(10);
+    appFont.setFamily("Microsoft YaHei UI, Segoe UI");
+    setFont(appFont);
 
     QWidget* centralWidget = new QWidget(this);
+    centralWidget->setStyleSheet(
+        "QGroupBox { font-weight: bold; font-size: 11pt; padding-top: 16px; margin-top: 8px; border: 2px solid #e5e7eb; border-radius: 8px; } "
+        "QGroupBox::title { subcontrol-origin: margin; left: 16px; padding: 0 8px; background-color: white; }"
+    );
     setCentralWidget(centralWidget);
 
     QVBoxLayout* mainLayout = new QVBoxLayout(centralWidget);
+    mainLayout->setSpacing(16);
+    mainLayout->setContentsMargins(20, 20, 20, 20);
 
-    // 服务器配置区域
-    QGroupBox* configGroup = new QGroupBox("Server Configuration", this);
-    QHBoxLayout* configLayout = new QHBoxLayout(configGroup);
+    // 配置区域
+    QGroupBox* configGroup = new QGroupBox("服务器配置", this);
+    QVBoxLayout* configMainLayout = new QVBoxLayout(configGroup);
+    configMainLayout->setSpacing(12);
 
-    configLayout->addWidget(new QLabel("Port:"));
+    QGridLayout* configGrid = new QGridLayout();
+    configGrid->setSpacing(12);
+    configGrid->setColumnStretch(1, 1);
+    configGrid->setColumnStretch(3, 1);
+
+    QLabel* portLabel = new QLabel("监听端口:");
+    portLabel->setStyleSheet("font-weight: normal; font-size: 10pt;");
+    configGrid->addWidget(portLabel, 0, 0);
+
     portSpinBox_ = new QSpinBox();
     portSpinBox_->setRange(1024, 65535);
     portSpinBox_->setValue(8888);
-    configLayout->addWidget(portSpinBox_);
+    portSpinBox_->setMinimumWidth(120);
+    portSpinBox_->setMinimumHeight(32);
+    portSpinBox_->setStyleSheet("QSpinBox { padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; }");
+    configGrid->addWidget(portSpinBox_, 0, 1);
 
-    uploadEnabledCheckBox_ = new QCheckBox("Enable Upload");
-    uploadEnabledCheckBox_->setChecked(true);
-    configLayout->addWidget(uploadEnabledCheckBox_);
+    QLabel* webPortLabel = new QLabel("Web 端口:");
+    webPortLabel->setStyleSheet("font-weight: normal; font-size: 10pt;");
+    configGrid->addWidget(webPortLabel, 0, 2);
 
-    webEnabledCheckBox_ = new QCheckBox("Enable Web");
-    webEnabledCheckBox_->setChecked(true);
-    configLayout->addWidget(webEnabledCheckBox_);
-
-    configLayout->addWidget(new QLabel("Web Port:"));
     webPortSpinBox_ = new QSpinBox();
     webPortSpinBox_->setRange(1024, 65535);
     webPortSpinBox_->setValue(8080);
-    configLayout->addWidget(webPortSpinBox_);
+    webPortSpinBox_->setMinimumWidth(120);
+    webPortSpinBox_->setMinimumHeight(32);
+    webPortSpinBox_->setStyleSheet("QSpinBox { padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; }");
+    configGrid->addWidget(webPortSpinBox_, 0, 3);
 
-    startStopButton_ = new QPushButton("Start Server");
-    connect(startStopButton_, &QPushButton::clicked, this, &MainWindow::onStartStopClicked);
-    configLayout->addWidget(startStopButton_);
+    uploadEnabledCheckBox_ = new QCheckBox("允许客户端上传文件");
+    uploadEnabledCheckBox_->setChecked(true);
+    uploadEnabledCheckBox_->setStyleSheet("QCheckBox { font-weight: normal; font-size: 10pt; spacing: 8px; }");
+    configGrid->addWidget(uploadEnabledCheckBox_, 1, 0, 1, 2);
 
-    refreshButton_ = new QPushButton("Refresh Index");
-    connect(refreshButton_, &QPushButton::clicked, this, &MainWindow::onRefreshIndexClicked);
-    configLayout->addWidget(refreshButton_);
+    webEnabledCheckBox_ = new QCheckBox("启用 Web 浏览器访问");
+    webEnabledCheckBox_->setChecked(true);
+    webEnabledCheckBox_->setStyleSheet("QCheckBox { font-weight: normal; font-size: 10pt; spacing: 8px; }");
+    configGrid->addWidget(webEnabledCheckBox_, 1, 2, 1, 2);
 
-    autoStartCheckBox_ = new QCheckBox("Start on Windows startup");
+    autoStartCheckBox_ = new QCheckBox("Windows 开机自动启动服务器");
     autoStartCheckBox_->setChecked(AutoStart::isAutoStartEnabled("CrossNetShareServer"));
+    autoStartCheckBox_->setStyleSheet("QCheckBox { font-weight: normal; font-size: 10pt; spacing: 8px; }");
+    configGrid->addWidget(autoStartCheckBox_, 2, 0, 1, 4);
     connect(autoStartCheckBox_, &QCheckBox::stateChanged, this, &MainWindow::onAutoStartChanged);
-    configLayout->addWidget(autoStartCheckBox_);
 
-    configLayout->addStretch();
+    configMainLayout->addLayout(configGrid);
+
+    QHBoxLayout* buttonLayout = new QHBoxLayout();
+    buttonLayout->setSpacing(12);
+
+    startStopButton_ = new QPushButton("启动服务器");
+    startStopButton_->setStyleSheet(
+        "QPushButton { padding: 10px 28px; font-weight: bold; font-size: 11pt; background-color: #2563eb; color: white; border: none; border-radius: 6px; } "
+        "QPushButton:hover { background-color: #1d4ed8; } "
+        "QPushButton:pressed { background-color: #1e40af; }"
+    );
+    startStopButton_->setMinimumHeight(42);
+    startStopButton_->setMinimumWidth(140);
+    connect(startStopButton_, &QPushButton::clicked, this, &MainWindow::onStartStopClicked);
+    buttonLayout->addWidget(startStopButton_);
+
+    refreshButton_ = new QPushButton("刷新文件索引");
+    refreshButton_->setStyleSheet(
+        "QPushButton { padding: 10px 24px; font-size: 10pt; background-color: white; border: 1px solid #d1d5db; border-radius: 6px; } "
+        "QPushButton:hover { background-color: #f3f4f6; }"
+    );
+    refreshButton_->setMinimumHeight(42);
+    connect(refreshButton_, &QPushButton::clicked, this, &MainWindow::onRefreshIndexClicked);
+    buttonLayout->addWidget(refreshButton_);
+
+    buttonLayout->addStretch();
+    configMainLayout->addLayout(buttonLayout);
 
     mainLayout->addWidget(configGroup);
 
     // 状态显示
-    QGroupBox* statusGroup = new QGroupBox("Status", this);
+    QGroupBox* statusGroup = new QGroupBox("服务器状态", this);
     QVBoxLayout* statusLayout = new QVBoxLayout(statusGroup);
+    statusLayout->setSpacing(8);
 
-    statusLabel_ = new QLabel("Server is stopped");
+    statusLabel_ = new QLabel("服务器已停止");
+    statusLabel_->setStyleSheet("font-weight: normal; font-size: 10pt; padding: 8px; background-color: #fef2f2; border-radius: 4px; color: #991b1b;");
     statusLayout->addWidget(statusLabel_);
 
     // 显示本机IP地址
-    QString ipInfo = "Available network interfaces:\n";
+    QString ipInfo = "可用的网络接口：\n";
     QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
     for (const QNetworkInterface& interface : interfaces) {
         if (interface.flags().testFlag(QNetworkInterface::IsUp) &&
@@ -108,26 +162,29 @@ void MainWindow::setupUi() {
     }
 
     QLabel* ipLabel = new QLabel(ipInfo);
-    ipLabel->setStyleSheet("QLabel { color: gray; font-size: 9pt; }");
+    ipLabel->setStyleSheet("font-weight: normal; font-size: 9pt; color: #6b7280; padding: 8px; background-color: #f9fafb; border-radius: 4px;");
+    ipLabel->setWordWrap(true);
     statusLayout->addWidget(ipLabel);
 
     mainLayout->addWidget(statusGroup);
 
-    // 客户端列表
-    QGroupBox* clientGroup = new QGroupBox("Connected Clients", this);
+    // 已连接客户端
+    QGroupBox* clientGroup = new QGroupBox("已连接客户端", this);
     QVBoxLayout* clientLayout = new QVBoxLayout(clientGroup);
 
     clientListWidget_ = new QListWidget();
+    clientListWidget_->setStyleSheet("QListWidget { font-size: 10pt; border: 1px solid #e5e7eb; border-radius: 4px; } QListWidget::item { padding: 8px; }");
     clientLayout->addWidget(clientListWidget_);
 
     mainLayout->addWidget(clientGroup);
 
     // 日志区域
-    QGroupBox* logGroup = new QGroupBox("Server Log", this);
+    QGroupBox* logGroup = new QGroupBox("服务器日志", this);
     QVBoxLayout* logLayout = new QVBoxLayout(logGroup);
 
     logTextEdit_ = new QTextEdit();
     logTextEdit_->setReadOnly(true);
+    logTextEdit_->setStyleSheet("QTextEdit { font-family: 'Consolas', 'Courier New', monospace; font-size: 9pt; border: 1px solid #e5e7eb; border-radius: 4px; background-color: #f9fafb; }");
     logLayout->addWidget(logTextEdit_);
 
     mainLayout->addWidget(logGroup);
@@ -150,18 +207,14 @@ void MainWindow::onStartStopClicked() {
         config.webPort = webPortSpinBox_->value();
 
         if (!server_->start(config)) {
-            QMessageBox::critical(this, "Error", "Failed to start server");
+            QMessageBox::critical(this, "错误", "服务器启动失败！");
         }
     }
 }
 
 void MainWindow::onRefreshIndexClicked() {
-    if (server_->isRunning()) {
-        server_->getIndexer()->refreshAll();
-        appendLog("File index refreshed");
-    } else {
-        QMessageBox::information(this, "Info", "Server is not running");
-    }
+    server_->getIndexer()->refreshIndex();
+    appendLog("文件索引已刷新");
 }
 
 void MainWindow::onServerStarted() {
@@ -209,24 +262,35 @@ void MainWindow::onLogMessage(const QString& message) {
 }
 
 void MainWindow::onServerError(const QString& errorMsg) {
-    appendLog("ERROR: " + errorMsg);
+    appendLog("错误: " + errorMsg);
 }
 
 void MainWindow::updateServerStatus() {
     if (server_->isRunning()) {
-        startStopButton_->setText("Stop Server");
+        startStopButton_->setText("停止服务器");
+        startStopButton_->setStyleSheet(
+            "QPushButton { padding: 10px 28px; font-weight: bold; font-size: 11pt; background-color: #dc2626; color: white; border: none; border-radius: 6px; } "
+            "QPushButton:hover { background-color: #b91c1c; } "
+            "QPushButton:pressed { background-color: #991b1b; }"
+        );
+
         ServerConfig config = server_->getConfig();
-        QString status = "Server is running on port " + QString::number(config.port) +
-                        " (Upload " + (config.uploadEnabled ? "Enabled" : "Disabled") + ")";
+        QString status = "服务器运行中 - 端口 " + QString::number(config.port) +
+                        " (上传 " + (config.uploadEnabled ? "已启用" : "已禁用") + ")";
         if (config.webEnabled) {
-            status += "\nWeb: http://0.0.0.0:" + QString::number(config.webPort) + " (admin/admin123)";
+            status += "\nWeb 访问: http://0.0.0.0:" + QString::number(config.webPort) + " (用户名/密码: admin/admin123)";
         }
         statusLabel_->setText(status);
-        statusLabel_->setStyleSheet("QLabel { color: green; font-weight: bold; }");
+        statusLabel_->setStyleSheet("font-weight: normal; font-size: 10pt; padding: 8px; background-color: #dcfce7; border-radius: 4px; color: #166534;");
     } else {
-        startStopButton_->setText("Start Server");
-        statusLabel_->setText("Server is stopped");
-        statusLabel_->setStyleSheet("QLabel { color: red; }");
+        startStopButton_->setText("启动服务器");
+        startStopButton_->setStyleSheet(
+            "QPushButton { padding: 10px 28px; font-weight: bold; font-size: 11pt; background-color: #2563eb; color: white; border: none; border-radius: 6px; } "
+            "QPushButton:hover { background-color: #1d4ed8; } "
+            "QPushButton:pressed { background-color: #1e40af; }"
+        );
+        statusLabel_->setText("服务器已停止");
+        statusLabel_->setStyleSheet("font-weight: normal; font-size: 10pt; padding: 8px; background-color: #fef2f2; border-radius: 4px; color: #991b1b;");
     }
 }
 
@@ -240,7 +304,7 @@ void MainWindow::appendLog(const QString& message) {
 
 void MainWindow::onCleanupCache() {
     DocumentConverter::cleanupCache();
-    appendLog("Cleaned up old preview cache files");
+    appendLog("已清理旧的预览缓存文件");
 }
 
 void MainWindow::onAutoStartChanged(int state) {
@@ -248,9 +312,9 @@ void MainWindow::onAutoStartChanged(int state) {
     QString appPath = QCoreApplication::applicationFilePath();
 
     if (AutoStart::setAutoStart("CrossNetShareServer", appPath, enable)) {
-        appendLog(enable ? "Auto-start enabled" : "Auto-start disabled");
+        appendLog(enable ? "已启用开机自启动" : "已禁用开机自启动");
     } else {
-        appendLog("Failed to change auto-start setting");
+        appendLog("修改开机自启动设置失败");
         autoStartCheckBox_->setChecked(!enable);
     }
 }

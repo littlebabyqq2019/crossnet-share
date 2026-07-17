@@ -51,7 +51,12 @@
       "Bash(cat server/web_browse.html | tr -d '\\\\n' | sed 's/  */ /g' > /tmp/minified_final.html && wc -c /tmp/minified_final.html)",
       "Bash(where soffice.exe)",
       "Bash(git commit -m 'Fix QAxObject COM call signatures for Qt compatibility *)",
-      "Bash(git commit -m 'Fix Connected Clients list showing duplicates *)"
+      "Bash(git commit -m 'Fix Connected Clients list showing duplicates *)",
+      "Bash(git commit -m 'Fix cleanupCache\\(\\) visibility - make it public *)",
+      "Bash(git commit -m 'Fix web interface issues: search box width, preview scaling, date input *)",
+      "Bash(git commit -m 'Add Select All/Deselect All buttons after date filter in client *)",
+      "Bash(cat)",
+      "Bash(git commit -m 'Beautify and translate UI to Chinese for both server and client *)"
     ]
   }
 }
