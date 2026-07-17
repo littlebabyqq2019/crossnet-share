@@ -81,26 +81,18 @@ void AuthManager::logout(const QString& token) {
 }
 
 bool AuthManager::addUser(const QString& username, const QString& password, const QString& role) {
-    QString normalized = username.trimmed();
-    if (normalized.isEmpty() || password.isEmpty() || users_.contains(normalized)) {
-        return false;
-    }
-
-    User user;
-    user.username = normalized;
-    user.passwordHash = hashPassword(password);
-    user.role = role.isEmpty() ? "user" : role;
-    users_[normalized] = user;
-    return true;
+    // 使用 UserManager 添加用户
+    bool isAdmin = (role == "admin");
+    return UserManager::instance()->addUser(username, password, isAdmin);
 }
 
 bool AuthManager::removeUser(const QString& username) {
-    if (!users_.contains(username)) {
+    // 使用 UserManager 删除用户
+    if (!UserManager::instance()->removeUser(username)) {
         return false;
     }
 
-    users_.remove(username);
-
+    // 移除该用户的所有会话
     QStringList tokens;
     for (auto it = sessions_.begin(); it != sessions_.end(); ++it) {
         if (it.value().username == username) {
@@ -115,17 +107,13 @@ bool AuthManager::removeUser(const QString& username) {
 }
 
 bool AuthManager::changePassword(const QString& username, const QString& oldPassword, const QString& newPassword) {
-    if (!users_.contains(username) || newPassword.isEmpty()) {
+    // 先验证旧密码
+    if (!UserManager::instance()->authenticate(username, oldPassword)) {
         return false;
     }
 
-    User& user = users_[username];
-    if (hashPassword(oldPassword) != user.passwordHash) {
-        return false;
-    }
-
-    user.passwordHash = hashPassword(newPassword);
-    return true;
+    // 更新为新密码
+    return UserManager::instance()->updatePassword(username, newPassword);
 }
 
 void AuthManager::cleanupExpiredSessions() {
