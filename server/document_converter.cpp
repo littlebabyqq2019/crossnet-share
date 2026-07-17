@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -225,8 +226,16 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
     QByteArray htmlContent = htmlFile.readAll();
     QString htmlString = QString::fromUtf8(htmlContent);
 
-    // 添加样式确保表格正常显示
-    QString styleTag = "<style>body{font-family:Arial,sans-serif;padding:20px;max-width:1200px;margin:0 auto}table{border-collapse:collapse;width:100%;margin:10px 0}td,th{border:1px solid #ddd;padding:8px;text-align:left}th{background-color:#f2f2f2}</style>";
+    // 添加样式确保表格正常显示，移除分页符
+    QString styleTag = "<style>"
+        "body{font-family:Arial,sans-serif;padding:20px;max-width:1200px;margin:0 auto;font-size:14px}"
+        "table{border-collapse:collapse;width:100%;margin:10px 0;page-break-inside:avoid}"
+        "td,th{border:1px solid #ddd;padding:8px;text-align:left;vertical-align:top}"
+        "th{background-color:#f2f2f2;font-weight:bold}"
+        "p{margin:5px 0;line-height:1.4}"
+        ".page-break,div[style*='page-break']{display:none !important}"
+        "@media print{.page-break{display:block;page-break-before:always}}"
+        "</style>";
 
     // 如果 HTML 包含 <head>，在其中插入样式
     int headPos = htmlString.indexOf("<head>", Qt::CaseInsensitive);
@@ -236,6 +245,10 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
         // 否则在开头插入
         htmlString.prepend("<!DOCTYPE html><html><head>" + styleTag + "</head><body>").append("</body></html>");
     }
+
+    // 移除 LibreOffice 生成的分页符元素
+    htmlString.replace(QRegularExpression("<div[^>]*style=\"[^\"]*page-break-before:[^\"]*\"[^>]*>\\s*</div>", QRegularExpression::CaseInsensitiveOption), "");
+    htmlString.replace(QRegularExpression("<div[^>]*style=\"[^\"]*page-break-after:[^\"]*\"[^>]*>\\s*</div>", QRegularExpression::CaseInsensitiveOption), "");
 
     result.success = true;
     result.mimeType = "text/html; charset=utf-8";
