@@ -168,6 +168,18 @@ void MainWindow::setupUi() {
     connect(refreshButton_, &QPushButton::clicked, this, &MainWindow::onRefreshFilesClicked);
     filterLayout->addWidget(refreshButton_);
 
+    QPushButton* selectAllButton = new QPushButton("Select All");
+    connect(selectAllButton, &QPushButton::clicked, this, [this]() {
+        fileTreeWidget_->selectAll();
+    });
+    filterLayout->addWidget(selectAllButton);
+
+    QPushButton* deselectAllButton = new QPushButton("Deselect All");
+    connect(deselectAllButton, &QPushButton::clicked, this, [this]() {
+        fileTreeWidget_->clearSelection();
+    });
+    filterLayout->addWidget(deselectAllButton);
+
     filterLayout->addStretch();
     browseLayout->addLayout(filterLayout);
 
