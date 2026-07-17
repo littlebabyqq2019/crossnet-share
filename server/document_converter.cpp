@@ -7,6 +7,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QTextCodec>
 #include <QUrl>
 
 namespace CrossNetShare {
@@ -100,9 +101,19 @@ DocumentConverter::PreviewResult DocumentConverter::previewText(const QString& f
     }
 
     QByteArray content = file.read(1024 * 1024);
+    QString text = QString::fromUtf8(content);
+
+    // 如果 UTF-8 解码后包含大量替换字符，尝试 GBK
+    if (text.count(QChar::ReplacementCharacter) > content.size() / 10) {
+        QTextCodec* gbkCodec = QTextCodec::codecForName("GBK");
+        if (gbkCodec) {
+            text = gbkCodec->toUnicode(content);
+        }
+    }
+
     result.success = true;
     result.mimeType = "text/html; charset=utf-8";
-    result.data = "<pre class=\"text-preview\">" + htmlEscape(QString::fromUtf8(content)) + "</pre>";
+    result.data = "<pre class=\"text-preview\">" + htmlEscape(text) + "</pre>";
     return result;
 }
 
@@ -211,9 +222,24 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
         return result;
     }
 
+    QByteArray htmlContent = htmlFile.readAll();
+    QString htmlString = QString::fromUtf8(htmlContent);
+
+    // 添加样式确保表格正常显示
+    QString styleTag = "<style>body{font-family:Arial,sans-serif;padding:20px;max-width:1200px;margin:0 auto}table{border-collapse:collapse;width:100%;margin:10px 0}td,th{border:1px solid #ddd;padding:8px;text-align:left}th{background-color:#f2f2f2}</style>";
+
+    // 如果 HTML 包含 <head>，在其中插入样式
+    int headPos = htmlString.indexOf("<head>", Qt::CaseInsensitive);
+    if (headPos >= 0) {
+        htmlString.insert(headPos + 6, styleTag);
+    } else {
+        // 否则在开头插入
+        htmlString.prepend("<!DOCTYPE html><html><head>" + styleTag + "</head><body>").append("</body></html>");
+    }
+
     result.success = true;
     result.mimeType = "text/html; charset=utf-8";
-    result.data = htmlFile.readAll();
+    result.data = htmlString.toUtf8();
     return result;
 }
 
