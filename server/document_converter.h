@@ -21,6 +21,7 @@ public:
 
     static void initialize();
     static void cleanup();
+    static void cleanupCache();
 
     static PreviewResult previewFile(const QString& filePath);
     static bool isPreviewSupported(const QString& filePath);
@@ -37,7 +38,6 @@ private:
 
     static QString getCachePath(const QString& filePath);
     static bool isCacheValid(const QString& cachePath, const QString& originalPath);
-    static void cleanupCache();
 
 #ifdef Q_OS_WIN
     static QAxObject* wordApp;
