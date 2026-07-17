@@ -8,12 +8,6 @@
 
 namespace CrossNetShare {
 
-struct User {
-    QString username;
-    QString passwordHash;
-    QString role;  // "admin" or "user"
-};
-
 struct Session {
     QString token;
     QString username;
@@ -65,7 +59,6 @@ private:
     QString generateToken();
     QString generateSalt();
 
-    QMap<QString, User> users_;           // username -> User
     QMap<QString, Session> sessions_;     // token -> Session
     int sessionTimeout_;                   // 会话超时时间（秒），默认1800（30分钟）
 };

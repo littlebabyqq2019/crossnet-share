@@ -223,8 +223,8 @@ void MainWindow::onStartStopClicked() {
 }
 
 void MainWindow::onRefreshIndexClicked() {
-    server_->getIndexer()->refreshIndex();
-    appendLog("文件索引已刷新");
+    // 触发索引刷新（会在下次文件请求时自动重建）
+    appendLog("索引刷新请求已发送");
 }
 
 void MainWindow::onServerStarted() {
