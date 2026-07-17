@@ -150,6 +150,19 @@ DocumentConverter::PreviewResult DocumentConverter::previewPdf(const QString& fi
 
 DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& filePath) {
     PreviewResult result;
+
+    // 检测 WordML 格式（Word 2003 XML）
+    QFile checkFile(filePath);
+    if (checkFile.open(QIODevice::ReadOnly)) {
+        QByteArray header = checkFile.read(512);
+        if (header.contains("<?xml") && header.contains("wordDocument")) {
+            result.success = false;
+            result.error = "WordML format (.doc XML) preview is not supported due to conversion issues. Please download the file to view it.";
+            return result;
+        }
+        checkFile.close();
+    }
+
     QString libreOffice = findLibreOffice();
     if (libreOffice.isEmpty()) {
         result.success = false;
