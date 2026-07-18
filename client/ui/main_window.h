@@ -13,6 +13,8 @@
 #include <QProgressBar>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QSystemTrayIcon>
+#include <QMenu>
 
 namespace CrossNetShare {
 
@@ -22,6 +24,9 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow();
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     // 连接相关
@@ -54,9 +59,13 @@ private slots:
     void onLogMessage(const QString& message);
     void onError(const QString& errorMsg);
     void onAutoStartChanged(int state);
+    void onTrayIconActivated(QSystemTrayIcon::ActivationReason reason);
+    void onShowWindow();
+    void onQuitApp();
 
 private:
     void setupUi();
+    void setupTrayIcon();
     void updateConnectionStatus();
     void appendLog(const QString& message);
     void updateFileTree(const std::vector<FileMetadata>& files);
@@ -97,6 +106,10 @@ private:
 
     // UI控件 - 日志区域
     QTextEdit* logTextEdit_;
+
+    // 系统托盘
+    QSystemTrayIcon* trayIcon_;
+    QMenu* trayMenu_;
 };
 
 }

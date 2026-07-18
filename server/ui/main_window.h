@@ -10,6 +10,8 @@
 #include <QListWidget>
 #include <QLabel>
 #include <QTimer>
+#include <QSystemTrayIcon>
+#include <QMenu>
 
 namespace CrossNetShare {
 
@@ -19,6 +21,9 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow();
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     void onStartStopClicked();
@@ -31,9 +36,13 @@ private slots:
     void onServerError(const QString& errorMsg);
     void onCleanupCache();
     void onSettingsClicked();
+    void onTrayIconActivated(QSystemTrayIcon::ActivationReason reason);
+    void onShowWindow();
+    void onQuitApp();
 
 private:
     void setupUi();
+    void setupTrayIcon();
     void updateServerStatus();
     void appendLog(const QString& message);
 
@@ -48,6 +57,10 @@ private:
     QLabel* statusLabel_;
     QListWidget* clientListWidget_;
     QTextEdit* logTextEdit_;
+
+    // 系统托盘
+    QSystemTrayIcon* trayIcon_;
+    QMenu* trayMenu_;
 };
 
 }

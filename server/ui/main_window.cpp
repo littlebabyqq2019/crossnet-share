@@ -10,6 +10,7 @@
 #include <QMessageBox>
 #include <QNetworkInterface>
 #include <QCoreApplication>
+#include <QCloseEvent>
 
 namespace CrossNetShare {
 
@@ -17,8 +18,11 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , server_(new Server(this))
     , cacheCleanupTimer_(new QTimer(this))
+    , trayIcon_(nullptr)
+    , trayMenu_(nullptr)
 {
     setupUi();
+    setupTrayIcon();
 
     connect(server_, &Server::started, this, &MainWindow::onServerStarted);
     connect(server_, &Server::stopped, this, &MainWindow::onServerStopped);
@@ -32,15 +36,90 @@ MainWindow::MainWindow(QWidget* parent)
 
     updateServerStatus();
 
-    // 自动启动服务器
+    // 自动启动服务器并隐藏到托盘
     QTimer::singleShot(500, this, [this]() {
         if (!server_->isRunning()) {
             onStartStopClicked();
+        }
+        // 启动后隐藏到托盘
+        hide();
+        if (trayIcon_) {
+            trayIcon_->showMessage("CrossNetShare 服务器",
+                                   "服务器已启动，运行在系统托盘中",
+                                   QSystemTrayIcon::Information,
+                                   2000);
         }
     });
 }
 
 MainWindow::~MainWindow() {
+    if (trayIcon_) {
+        trayIcon_->hide();
+        delete trayIcon_;
+    }
+    if (trayMenu_) {
+        delete trayMenu_;
+    }
+}
+
+void MainWindow::setupTrayIcon() {
+    // 创建托盘菜单
+    trayMenu_ = new QMenu(this);
+
+    QAction* showAction = new QAction("显示主窗口", this);
+    connect(showAction, &QAction::triggered, this, &MainWindow::onShowWindow);
+    trayMenu_->addAction(showAction);
+
+    trayMenu_->addSeparator();
+
+    QAction* quitAction = new QAction("退出", this);
+    connect(quitAction, &QAction::triggered, this, &MainWindow::onQuitApp);
+    trayMenu_->addAction(quitAction);
+
+    // 创建托盘图标
+    trayIcon_ = new QSystemTrayIcon(this);
+    trayIcon_->setContextMenu(trayMenu_);
+    trayIcon_->setToolTip("CrossNetShare 服务器");
+
+    // 使用默认图标
+    trayIcon_->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
+
+    connect(trayIcon_, &QSystemTrayIcon::activated, this, &MainWindow::onTrayIconActivated);
+
+    trayIcon_->show();
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    // 点击关闭按钮隐藏到托盘而不是退出
+    if (trayIcon_ && trayIcon_->isVisible()) {
+        hide();
+        event->ignore();
+        trayIcon_->showMessage("CrossNetShare 服务器",
+                               "程序已最小化到系统托盘",
+                               QSystemTrayIcon::Information,
+                               1000);
+    } else {
+        event->accept();
+    }
+}
+
+void MainWindow::onTrayIconActivated(QSystemTrayIcon::ActivationReason reason) {
+    if (reason == QSystemTrayIcon::DoubleClick) {
+        onShowWindow();
+    }
+}
+
+void MainWindow::onShowWindow() {
+    show();
+    raise();
+    activateWindow();
+}
+
+void MainWindow::onQuitApp() {
+    if (server_->isRunning()) {
+        server_->stop();
+    }
+    QApplication::quit();
 }
 
 void MainWindow::setupUi() {
