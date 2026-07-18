@@ -10,6 +10,7 @@
 #include <QMessageBox>
 #include <QNetworkInterface>
 #include <QCoreApplication>
+#include <QApplication>
 #include <QCloseEvent>
 
 namespace CrossNetShare {

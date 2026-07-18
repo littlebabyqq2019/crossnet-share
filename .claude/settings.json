@@ -64,7 +64,8 @@
       "Bash(git commit -m 'Move server options to settings, auto-start server, silent registration *)",
       "Bash(git commit -m 'Fix web date placeholder and preview iframe size *)",
       "Bash(git commit -m 'Fix toolbar overflow and add resizable split panel *)",
-      "Bash(git commit -m 'Lock preview iframe size completely *)"
+      "Bash(git commit -m 'Lock preview iframe size completely *)",
+      "Bash(git commit -m 'Fix compilation: add missing QApplication header *)"
     ]
   }
 }

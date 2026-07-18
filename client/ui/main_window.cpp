@@ -11,6 +11,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QCoreApplication>
+#include <QApplication>
 #include <QCloseEvent>
 
 namespace CrossNetShare {
