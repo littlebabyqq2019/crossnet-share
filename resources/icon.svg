@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle with gradient -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1d3557;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#457b9d;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Main circle background -->
+  <circle cx="128" cy="128" r="120" fill="url(#bgGradient)"/>
+
+  <!-- Network nodes (computers) -->
+  <!-- Left computer -->
+  <rect x="40" y="100" width="48" height="36" rx="4" fill="#ffffff" opacity="0.9"/>
+  <rect x="50" y="108" width="28" height="20" rx="2" fill="url(#accentGradient)"/>
+
+  <!-- Right computer -->
+  <rect x="168" y="100" width="48" height="36" rx="4" fill="#ffffff" opacity="0.9"/>
+  <rect x="178" y="108" width="28" height="20" rx="2" fill="url(#accentGradient)"/>
+
+  <!-- Top computer -->
+  <rect x="104" y="40" width="48" height="36" rx="4" fill="#ffffff" opacity="0.9"/>
+  <rect x="114" y="48" width="28" height="20" rx="2" fill="url(#accentGradient)"/>
+
+  <!-- Bottom computer -->
+  <rect x="104" y="180" width="48" height="36" rx="4" fill="#ffffff" opacity="0.9"/>
+  <rect x="114" y="188" width="28" height="20" rx="2" fill="url(#accentGradient)"/>
+
+  <!-- Connection lines -->
+  <line x1="64" y1="118" x2="104" y2="118" stroke="#f1c40f" stroke-width="4" stroke-linecap="round"/>
+  <line x1="152" y1="118" x2="192" y2="118" stroke="#f1c40f" stroke-width="4" stroke-linecap="round"/>
+  <line x1="128" y1="76" x2="128" y2="100" stroke="#f1c40f" stroke-width="4" stroke-linecap="round"/>
+  <line x1="128" y1="136" x2="128" y2="180" stroke="#f1c40f" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Center hub/server -->
+  <circle cx="128" cy="118" r="18" fill="#ffffff"/>
+  <circle cx="128" cy="118" r="14" fill="url(#accentGradient)"/>
+
+  <!-- Share arrows -->
+  <path d="M 128 105 L 135 112 L 128 119 L 121 112 Z" fill="#f1c40f"/>
+
+  <!-- Subtle border -->
+  <circle cx="128" cy="128" r="120" fill="none" stroke="#ffffff" stroke-width="3" opacity="0.3"/>
+</svg>

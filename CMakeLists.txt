@@ -44,29 +44,56 @@ target_link_libraries(common
 target_include_directories(common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 服务器
-add_executable(CrossNetShareServer
-    server/main.cpp
-    server/server.cpp
-    server/server.h
-    server/file_indexer.cpp
-    server/file_indexer.h
-    server/client_handler.cpp
-    server/client_handler.h
-    server/file_watcher.cpp
-    server/file_watcher.h
-    server/web_server.cpp
-    server/web_server.h
-    server/auth_manager.cpp
-    server/auth_manager.h
-    server/user_manager.cpp
-    server/user_manager.h
-    server/document_converter.cpp
-    server/document_converter.h
-    server/ui/main_window.cpp
-    server/ui/main_window.h
-    server/ui/settings_dialog.cpp
-    server/ui/settings_dialog.h
-)
+if(WIN32)
+    add_executable(CrossNetShareServer WIN32
+        server/main.cpp
+        server/server.cpp
+        server/server.h
+        server/file_indexer.cpp
+        server/file_indexer.h
+        server/client_handler.cpp
+        server/client_handler.h
+        server/file_watcher.cpp
+        server/file_watcher.h
+        server/web_server.cpp
+        server/web_server.h
+        server/auth_manager.cpp
+        server/auth_manager.h
+        server/user_manager.cpp
+        server/user_manager.h
+        server/document_converter.cpp
+        server/document_converter.h
+        server/ui/main_window.cpp
+        server/ui/main_window.h
+        server/ui/settings_dialog.cpp
+        server/ui/settings_dialog.h
+        server/server.rc
+    )
+else()
+    add_executable(CrossNetShareServer
+        server/main.cpp
+        server/server.cpp
+        server/server.h
+        server/file_indexer.cpp
+        server/file_indexer.h
+        server/client_handler.cpp
+        server/client_handler.h
+        server/file_watcher.cpp
+        server/file_watcher.h
+        server/web_server.cpp
+        server/web_server.h
+        server/auth_manager.cpp
+        server/auth_manager.h
+        server/user_manager.cpp
+        server/user_manager.h
+        server/document_converter.cpp
+        server/document_converter.h
+        server/ui/main_window.cpp
+        server/ui/main_window.h
+        server/ui/settings_dialog.cpp
+        server/ui/settings_dialog.h
+    )
+endif()
 
 target_link_libraries(CrossNetShareServer
     PRIVATE common
@@ -76,15 +103,28 @@ target_link_libraries(CrossNetShareServer
 )
 
 # 客户端
-add_executable(CrossNetShareClient
-    client/main.cpp
-    client/client.cpp
-    client/client.h
-    client/file_manager.cpp
-    client/file_manager.h
-    client/ui/main_window.cpp
-    client/ui/main_window.h
-)
+if(WIN32)
+    add_executable(CrossNetShareClient WIN32
+        client/main.cpp
+        client/client.cpp
+        client/client.h
+        client/file_manager.cpp
+        client/file_manager.h
+        client/ui/main_window.cpp
+        client/ui/main_window.h
+        client/client.rc
+    )
+else()
+    add_executable(CrossNetShareClient
+        client/main.cpp
+        client/client.cpp
+        client/client.h
+        client/file_manager.cpp
+        client/file_manager.h
+        client/ui/main_window.cpp
+        client/ui/main_window.h
+    )
+endif()
 
 target_link_libraries(CrossNetShareClient
     PRIVATE common

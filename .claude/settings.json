@@ -65,7 +65,11 @@
       "Bash(git commit -m 'Fix web date placeholder and preview iframe size *)",
       "Bash(git commit -m 'Fix toolbar overflow and add resizable split panel *)",
       "Bash(git commit -m 'Lock preview iframe size completely *)",
-      "Bash(git commit -m 'Fix compilation: add missing QApplication header *)"
+      "Bash(git commit -m 'Fix compilation: add missing QApplication header *)",
+      "Bash(where magick *)",
+      "Bash(where convert *)",
+      "Bash(python3 create_icons.py)",
+      "Bash(git commit -m 'Add version information 1.0.0 and prepare for icons *)"
     ]
   }
 }
