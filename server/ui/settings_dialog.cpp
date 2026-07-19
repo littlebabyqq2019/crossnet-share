@@ -1,5 +1,6 @@
 #include "settings_dialog.h"
 #include "user_management_dialog.h"
+#include "audit_log_dialog.h"
 #include "common/autostart.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -124,6 +125,13 @@ void SettingsDialog::setupUi() {
     userManagementButton->setMinimumHeight(36);
     connect(userManagementButton, &QPushButton::clicked, this, &SettingsDialog::onUserManagementClicked);
     buttonLayout->addWidget(userManagementButton);
+
+    QPushButton* auditLogButton = new QPushButton("审计日志");
+    auditLogButton->setStyleSheet("QPushButton { padding: 8px 20px; background-color: #7c3aed; color: white; border: none; border-radius: 6px; } "
+                                   "QPushButton:hover { background-color: #6d28d9; }");
+    auditLogButton->setMinimumHeight(36);
+    connect(auditLogButton, &QPushButton::clicked, this, &SettingsDialog::onAuditLogClicked);
+    buttonLayout->addWidget(auditLogButton);
 
     buttonLayout->addStretch();
     userLayout->addLayout(buttonLayout);
@@ -257,6 +265,11 @@ void SettingsDialog::onUserManagementClicked() {
         // 刷新用户列表
         loadUsers();
     }
+}
+
+void SettingsDialog::onAuditLogClicked() {
+    AuditLogDialog dialog(this);
+    dialog.exec();
 }
 
 }

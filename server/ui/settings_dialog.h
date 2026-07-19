@@ -29,6 +29,7 @@ private slots:
     void onChangePasswordClicked();
     void onRefreshUsersClicked();
     void onUserManagementClicked();
+    void onAuditLogClicked();
 
 private:
     void setupUi();

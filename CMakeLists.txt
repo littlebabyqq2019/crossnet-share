@@ -71,6 +71,8 @@ if(WIN32)
         server/ui/settings_dialog.h
         server/ui/user_management_dialog.cpp
         server/ui/user_management_dialog.h
+        server/ui/audit_log_dialog.cpp
+        server/ui/audit_log_dialog.h
         server/server.rc
     )
 else()

@@ -1,6 +1,7 @@
 #include "server.h"
 #include "web_server.h"
 #include "auth_manager.h"
+#include "audit_logger.h"
 #include <QCoreApplication>
 #include <QNetworkInterface>
 
@@ -17,6 +18,10 @@ Server::Server(QObject* parent)
     webServer_->setServer(this);
     authManager_->loadUsers(QCoreApplication::applicationDirPath() + "/users.json");
 
+    // 加载审计日志
+    QString auditLogPath = QCoreApplication::applicationDirPath() + "/audit_log.json";
+    AuditLogger::instance()->loadFromFile(auditLogPath);
+
     connect(fileWatcher_, &FileWatcher::logMessage, this, &Server::onFileWatcherLog);
     connect(fileWatcher_, &FileWatcher::directoryChanged, this, &Server::onDirectoryChanged);
     connect(webServer_, &WebServer::logMessage, this, &Server::logMessage);
@@ -25,6 +30,10 @@ Server::Server(QObject* parent)
 
 Server::~Server() {
     stop();
+
+    // 保存审计日志
+    QString auditLogPath = QCoreApplication::applicationDirPath() + "/audit_log.json";
+    AuditLogger::instance()->saveToFile(auditLogPath);
 }
 
 bool Server::start(const ServerConfig& config) {
