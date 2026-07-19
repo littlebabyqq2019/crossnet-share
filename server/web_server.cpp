@@ -2,6 +2,7 @@
 #include "server.h"
 #include "client_handler.h"
 #include "auth_manager.h"
+#include "user_manager.h"
 #include "document_converter.h"
 #include "file_indexer.h"
 #include "audit_logger.h"
