@@ -1,6 +1,5 @@
 #include "main_window.h"
 #include "settings_dialog.h"
-#include "user_management_dialog.h"
 #include "../document_converter.h"
 #include "common/autostart.h"
 #include <QVBoxLayout>
@@ -125,7 +124,7 @@ void MainWindow::onQuitApp() {
 }
 
 void MainWindow::setupUi() {
-    setWindowTitle("CrossNetShare 服务器");
+    setWindowTitle("CrossNetShare 服务器 v1.1.0");
     resize(980, 800);
 
     // 设置全局字体
@@ -212,15 +211,6 @@ void MainWindow::setupUi() {
     settingsButton->setMinimumHeight(42);
     connect(settingsButton, &QPushButton::clicked, this, &MainWindow::onSettingsClicked);
     buttonLayout->addWidget(settingsButton);
-
-    QPushButton* userManagementButton = new QPushButton("用户管理");
-    userManagementButton->setStyleSheet(
-        "QPushButton { padding: 10px 24px; font-size: 10pt; background-color: white; border: 1px solid #d1d5db; border-radius: 6px; } "
-        "QPushButton:hover { background-color: #f3f4f6; }"
-    );
-    userManagementButton->setMinimumHeight(42);
-    connect(userManagementButton, &QPushButton::clicked, this, &MainWindow::onUserManagementClicked);
-    buttonLayout->addWidget(userManagementButton);
 
     buttonLayout->addStretch();
     configMainLayout->addLayout(buttonLayout);
@@ -398,11 +388,6 @@ void MainWindow::onCleanupCache() {
 
 void MainWindow::onSettingsClicked() {
     SettingsDialog dialog(this);
-    dialog.exec();
-}
-
-void MainWindow::onUserManagementClicked() {
-    UserManagementDialog dialog(this);
     dialog.exec();
 }
 

@@ -1,4 +1,5 @@
 #include "settings_dialog.h"
+#include "user_management_dialog.h"
 #include "common/autostart.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -116,6 +117,13 @@ void SettingsDialog::setupUi() {
     refreshButton_->setMinimumHeight(36);
     connect(refreshButton_, &QPushButton::clicked, this, &SettingsDialog::onRefreshUsersClicked);
     buttonLayout->addWidget(refreshButton_);
+
+    QPushButton* userManagementButton = new QPushButton("高级用户管理");
+    userManagementButton->setStyleSheet("QPushButton { padding: 8px 20px; background-color: #059669; color: white; border: none; border-radius: 6px; } "
+                                         "QPushButton:hover { background-color: #047857; }");
+    userManagementButton->setMinimumHeight(36);
+    connect(userManagementButton, &QPushButton::clicked, this, &SettingsDialog::onUserManagementClicked);
+    buttonLayout->addWidget(userManagementButton);
 
     buttonLayout->addStretch();
     userLayout->addLayout(buttonLayout);
@@ -241,6 +249,14 @@ bool SettingsDialog::getWebEnabled() const {
 
 bool SettingsDialog::getAutoStartEnabled() const {
     return autoStartCheckBox_->isChecked();
+}
+
+void SettingsDialog::onUserManagementClicked() {
+    UserManagementDialog dialog(this);
+    if (dialog.exec() == QDialog::Accepted) {
+        // 刷新用户列表
+        loadUsers();
+    }
 }
 
 }

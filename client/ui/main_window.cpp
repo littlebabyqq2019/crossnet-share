@@ -158,7 +158,7 @@ void MainWindow::onQuitApp() {
 }
 
 void MainWindow::setupUi() {
-    setWindowTitle("CrossNetShare 客户端");
+    setWindowTitle("CrossNetShare 客户端 v1.1.0");
     resize(1000, 800);
 
     // 设置全局字体

@@ -28,6 +28,7 @@ private slots:
     void onRemoveUserClicked();
     void onChangePasswordClicked();
     void onRefreshUsersClicked();
+    void onUserManagementClicked();
 
 private:
     void setupUi();
