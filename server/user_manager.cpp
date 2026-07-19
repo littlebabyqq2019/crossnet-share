@@ -17,6 +17,7 @@ UserManager::UserManager() {
     defaultAdmin.passwordHash = hashPassword("admin123");
     defaultAdmin.isAdmin = true;
     defaultAdmin.isActive = true;
+    defaultAdmin.permission = UserPermission::Download;  // 管理员默认完整权限
     defaultAdmin.createdAt = QDateTime::currentDateTime();
     users_.append(defaultAdmin);
 }
@@ -42,7 +43,7 @@ int UserManager::findUserIndex(const QString& username) const {
     return -1;
 }
 
-bool UserManager::addUser(const QString& username, const QString& password, bool isAdmin) {
+bool UserManager::addUser(const QString& username, const QString& password, bool isAdmin, UserPermission permission) {
     QMutexLocker locker(&mutex_);
 
     if (username.isEmpty() || password.isEmpty()) {
@@ -58,6 +59,7 @@ bool UserManager::addUser(const QString& username, const QString& password, bool
     user.passwordHash = hashPassword(password);
     user.isAdmin = isAdmin;
     user.isActive = true;
+    user.permission = permission;
     user.createdAt = QDateTime::currentDateTime();
 
     users_.append(user);
@@ -131,6 +133,18 @@ bool UserManager::setActive(const QString& username, bool isActive) {
     return true;
 }
 
+bool UserManager::setPermission(const QString& username, UserPermission permission) {
+    QMutexLocker locker(&mutex_);
+
+    int index = findUserIndex(username);
+    if (index < 0) {
+        return false;
+    }
+
+    users_[index].permission = permission;
+    return true;
+}
+
 bool UserManager::authenticate(const QString& username, const QString& password) {
     QMutexLocker locker(&mutex_);
 
@@ -156,6 +170,17 @@ User UserManager::getUser(const QString& username) const {
     }
 
     return User();
+}
+
+UserPermission UserManager::getUserPermission(const QString& username) const {
+    QMutexLocker locker(&mutex_);
+
+    int index = findUserIndex(username);
+    if (index >= 0) {
+        return users_[index].permission;
+    }
+
+    return UserPermission::ReadOnly;  // 默认最低权限
 }
 
 QVector<User> UserManager::getAllUsers() const {
@@ -193,6 +218,10 @@ bool UserManager::loadFromFile(const QString& filePath) {
         user.isActive = userObj["isActive"].toBool(true);
         user.createdAt = QDateTime::fromString(userObj["createdAt"].toString(), Qt::ISODate);
 
+        // 加载权限，默认为下载权限以兼容旧数据
+        QString permStr = userObj["permission"].toString("Download");
+        user.permission = stringToPermission(permStr);
+
         users_.append(user);
     }
 
@@ -203,6 +232,7 @@ bool UserManager::loadFromFile(const QString& filePath) {
         defaultAdmin.passwordHash = hashPassword("admin123");
         defaultAdmin.isAdmin = true;
         defaultAdmin.isActive = true;
+        defaultAdmin.permission = UserPermission::Download;
         defaultAdmin.createdAt = QDateTime::currentDateTime();
         users_.append(defaultAdmin);
     }
@@ -221,6 +251,7 @@ bool UserManager::saveToFile(const QString& filePath) {
         userObj["isAdmin"] = user.isAdmin;
         userObj["isActive"] = user.isActive;
         userObj["createdAt"] = user.createdAt.toString(Qt::ISODate);
+        userObj["permission"] = permissionToString(user.permission);
 
         usersArray.append(userObj);
     }

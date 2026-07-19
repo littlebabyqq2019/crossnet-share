@@ -1,6 +1,6 @@
 # Cloude Code ToolBox — MCP & Skills awareness
 
-_Generated: 2026-07-17T12:10:40.060Z_
+_Generated: 2026-07-19T15:10:33.365Z_
 
 ## How to use this report
 
@@ -32,6 +32,9 @@ _No active user-scoped servers in mcp.json._
 _None found (or no workspace open)._
 
 ### User-scoped
+
+- **dashi-ppt** — `C:\Users\asusu\.claude\skills\dashi-ppt`
+  - 制作 PPT、演示文稿、幻灯片、汇报材料时使用。Dashi PPT 基于预置视觉主题组合页面,生成可离线打开、可在浏览器编辑的 HTML 演示,支持导出 PPTX / PDF 文件。
 
 - **planning-with-files** — `C:\Users\asusu\.claude\skills\planning-with-files`
   - Implements Manus-style file-based planning to organize and track progress on complex tasks. Creates task_plan.md, findings.md, and progress.md. Use when asked to plan out, break down, or organize a multi-step project, re

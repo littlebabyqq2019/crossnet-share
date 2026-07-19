@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(CrossNetShare VERSION 1.0.0 LANGUAGES CXX)
+project(CrossNetShare VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,12 +61,16 @@ if(WIN32)
         server/auth_manager.h
         server/user_manager.cpp
         server/user_manager.h
+        server/audit_logger.cpp
+        server/audit_logger.h
         server/document_converter.cpp
         server/document_converter.h
         server/ui/main_window.cpp
         server/ui/main_window.h
         server/ui/settings_dialog.cpp
         server/ui/settings_dialog.h
+        server/ui/user_management_dialog.cpp
+        server/ui/user_management_dialog.h
         server/server.rc
     )
 else()
@@ -86,6 +90,8 @@ else()
         server/auth_manager.h
         server/user_manager.cpp
         server/user_manager.h
+        server/audit_logger.cpp
+        server/audit_logger.h
         server/document_converter.cpp
         server/document_converter.h
         server/ui/main_window.cpp

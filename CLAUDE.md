@@ -4,11 +4,12 @@
 
 
 
+
 <!-- cloude-code-toolbox:mcp-skills-awareness-begin -->
 
 ### MCP & Skills awareness (Cloude Code ToolBox)
 
-_Last synced: 2026-07-17T12:10:40.072Z._
+_Last synced: 2026-07-19T15:10:33.378Z._
 
 - **Full report:** `.claude/cloude-code-toolbox-mcp-skills-awareness.md` in this workspace (auto-overwritten on each scan). Use it as ground truth for configured servers and skill folders.
 - **MCP:** For **live tools** in Claude Code, enable the matching server via `/mcp`. Servers are configured in `~/.claude.json` (user) and `.mcp.json` (project).
@@ -32,6 +33,8 @@ _No active user-scoped servers in mcp.json._
 _None found (or no workspace open)._
 
 #### User skills
+
+- **dashi-ppt** — `C:\Users\asusu\.claude\skills\dashi-ppt` — 制作 PPT、演示文稿、幻灯片、汇报材料时使用。Dashi PPT 基于预置视觉主题组合页面,生成可离线打开、可在浏览器编辑的 HTML 演示,支持导出 PPTX / PDF 文件。
 
 - **planning-with-files** — `C:\Users\asusu\.claude\skills\planning-with-files` — Implements Manus-style file-based planning to organize and track progress on complex tasks. Creates task_plan.md, findings.md, and progress.md. Use when asked to plan out, break down, or organize a multi-step project, re
 

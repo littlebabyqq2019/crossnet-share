@@ -4,6 +4,7 @@
 #include "auth_manager.h"
 #include "document_converter.h"
 #include "file_indexer.h"
+#include "audit_logger.h"
 #include "common/protocol.h"
 #include <nlohmann/json.hpp>
 #include <QDateTime>
@@ -239,7 +240,9 @@ void WebServer::handleRequest(QTcpSocket* socket, const HttpRequest& request) {
         return;
     }
 
-    if (request.path == "/api/files") {
+    if (request.path == "/api/user") {
+        handleUserInfo(socket, request);
+    } else if (request.path == "/api/files") {
         handleFileList(socket, request);
     } else if (request.path == "/api/search") {
         handleFileSearch(socket, request);
@@ -292,7 +295,12 @@ void WebServer::handleLogin(QTcpSocket* socket, const HttpRequest& request) {
     }
 
     QString token = authManager_->authenticate(username, password);
+    QString clientIp = socket->peerAddress().toString();
+
     if (token.isEmpty()) {
+        // 记录登录失败
+        AuditLogger::instance()->log(username, AuditAction::Login, "", clientIp, false);
+
         response.statusCode = 403;
         response.statusText = "Forbidden";
         response.body = jsonResponse({{"success", false}, {"error", "Invalid username or password"}});
@@ -300,14 +308,22 @@ void WebServer::handleLogin(QTcpSocket* socket, const HttpRequest& request) {
         return;
     }
 
+    // 记录登录成功
+    AuditLogger::instance()->log(username, AuditAction::Login, "", clientIp, true);
+
     response.headers["Set-Cookie"] = "CNS_SESSION=" + token + "; Path=/; HttpOnly; SameSite=Strict";
     response.body = jsonResponse({{"success", true}, {"redirect", "/browse"}});
     sendResponse(socket, response);
 }
 
 void WebServer::handleLogout(QTcpSocket* socket, const HttpRequest& request) {
-    if (authManager_) {
-        authManager_->logout(cookieValue(request, "CNS_SESSION"));
+    QString username;
+    QString token = cookieValue(request, "CNS_SESSION");
+
+    if (authManager_ && isAuthenticated(request, username)) {
+        // 记录登出
+        AuditLogger::instance()->log(username, AuditAction::Logout, "", socket->peerAddress().toString(), true);
+        authManager_->logout(token);
     }
 
     HttpResponse response;
@@ -315,6 +331,33 @@ void WebServer::handleLogout(QTcpSocket* socket, const HttpRequest& request) {
     response.statusText = "Found";
     response.headers["Location"] = "/login";
     response.headers["Set-Cookie"] = "CNS_SESSION=deleted; Path=/; Max-Age=0";
+    sendResponse(socket, response);
+}
+
+void WebServer::handleUserInfo(QTcpSocket* socket, const HttpRequest& request) {
+    QString username;
+    if (!isAuthenticated(request, username)) {
+        HttpResponse response;
+        response.statusCode = 401;
+        response.statusText = "Unauthorized";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = jsonResponse({{"success", false}, {"error", "Unauthorized"}});
+        sendResponse(socket, response);
+        return;
+    }
+
+    // 获取用户信息
+    User user = UserManager::instance()->getUser(username);
+
+    nlohmann::json userJson;
+    userJson["username"] = username.toStdString();
+    userJson["isAdmin"] = user.isAdmin;
+    userJson["permission"] = permissionToString(user.permission).toStdString();
+    userJson["permissionLevel"] = static_cast<int>(user.permission);
+
+    HttpResponse response;
+    response.headers["Content-Type"] = "application/json; charset=utf-8";
+    response.body = jsonResponse({{"success", true}, {"user", userJson}});
     sendResponse(socket, response);
 }
 
@@ -369,6 +412,15 @@ void WebServer::handleFileSearch(QTcpSocket* socket, const HttpRequest& request)
 }
 
 void WebServer::handleFileDownload(QTcpSocket* socket, const HttpRequest& request) {
+    QString username;
+    if (!isAuthenticated(request, username)) {
+        HttpResponse response;
+        response.statusCode = 401;
+        response.statusText = "Unauthorized";
+        sendResponse(socket, response);
+        return;
+    }
+
     QString clientId;
     QString relativePath;
     if (!parseFileId(request.params.value("id"), clientId, relativePath)) {
@@ -387,6 +439,9 @@ void WebServer::handleFileDownload(QTcpSocket* socket, const HttpRequest& reques
     if (info.exists() && info.isFile()) {
         QFile file(fullPath);
         if (file.open(QIODevice::ReadOnly)) {
+            // 记录下载日志
+            AuditLogger::instance()->log(username, AuditAction::DownloadFile, relativePath, socket->peerAddress().toString(), true);
+
             HttpResponse response;
             response.headers["Content-Type"] = "application/octet-stream";
             response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding(info.fileName()));
@@ -402,6 +457,9 @@ void WebServer::handleFileDownload(QTcpSocket* socket, const HttpRequest& reques
         if (handler) {
             auto result = handler->requestFileSync(relativePath, 60000);
             if (result.success) {
+                // 记录下载日志
+                AuditLogger::instance()->log(username, AuditAction::DownloadFile, relativePath, socket->peerAddress().toString(), true);
+
                 HttpResponse response;
                 response.headers["Content-Type"] = "application/octet-stream";
                 response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding(QFileInfo(relativePath).fileName()));
@@ -677,7 +735,7 @@ document.addEventListener('keydown',ev=>{if(ev.key==='Enter')login()});
 
 void WebServer::serveBrowsePage(QTcpSocket* socket) {
     static const char* html = R"HTML(
-<!doctype html><html lang="zh-CN"><head> <meta charset="utf-8"> <meta name="viewport" content="width=device-width,initial-scale=1"> <title>CrossNetShare Web</title> <style> body{font-family:Segoe UI,Microsoft YaHei,sans-serif;margin:0;color:#101828;background:#f6f8fb} .top{height:64px;background:#1d3557;color:white;display:flex;align-items:center;gap:16px;padding:0 22px} .top h1{font-size:20px;margin:0} .search{flex:1;max-width:800px;display:flex;gap:8px;align-items:center} .search input{width:100%;border:0;border-radius:8px;padding:10px} .date-filter{display:flex;gap:8px;align-items:center;color:white;font-size:14px} .date-filter input[type="date"]{border:0;border-radius:6px;padding:6px;color:#111827} .top-actions{margin-left:auto;display:flex;gap:8px;align-items:center} .btn{border:0;border-radius:8px;padding:10px 14px;cursor:pointer;background:#2563eb;color:white;text-decoration:none;font-size:14px;white-space:nowrap} .btn.secondary{background:#e5e7eb;color:#111827} .btn:disabled{opacity:0.5;cursor:not-allowed} .layout{display:flex;height:calc(100vh - 64px)} .list{width:420px;min-width:200px;max-width:800px;border-right:1px solid #e4e7ec;background:white;overflow:auto} .list-header{padding:10px 14px;border-bottom:2px solid #e4e7ec;background:#f9fafb;display:flex;gap:8px;align-items:center} .item{padding:12px 14px;border-bottom:1px solid #eef2f7;cursor:pointer;display:flex;gap:10px;align-items:start} .item:hover{background:#eff6ff} .item.active{background:#dbeafe} .item input[type="checkbox"]{margin-top:4px;width:16px;height:16px;cursor:pointer} .item-content{flex:1;min-width:0} .name{font-weight:600} .meta{font-size:12px;color:#667085;margin-top:4px} .preview{flex:1;display:flex;flex-direction:column;min-width:0;max-height:calc(100vh - 64px);overflow:hidden} .toolbar{background:white;border-bottom:1px solid #e4e7ec;padding:10px;display:flex;gap:8px;align-items:center;overflow-x:auto;flex-shrink:0} .frame{border:0;background:white;margin:16px;border-radius:10px;box-shadow:0 1px 3px #0000001a;width:100%;height:100%;flex:1;min-height:0} .empty{padding:40px;color:#667085;text-align:center} .text-preview{white-space:pre-wrap;padding:20px} .count{color:#667085;font-size:13px} .resizer{width:5px;cursor:col-resize;background:#f3f4f6;flex-shrink:0} .resizer:hover{background:#d1d5db} </style></head><body> <div class="top"> <h1>CrossNetShare Web</h1> <div class="search"> <input id="q" placeholder="输入关键词实时过滤文件"> </div> <div class="date-filter"> <label>日期筛选:</label> <input type="date" id="dateFrom" style="width:150px"> <button class="btn" onclick="selectByDate()">选择</button> <button class="btn secondary" onclick="clearDateFilter()">清除</button> </div> <div class="top-actions"> <button class="btn" onclick="downloadSelected()" id="batchDownloadBtn" disabled>批量下载</button> <a class="btn secondary" href="/api/logout">退出</a> </div> </div> <div class="layout"> <div class="list" id="fileList"> <div class="list-header"> <input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> <label for="selectAll" style="flex:1;cursor:pointer">全选 / 全不选</label> <span id="count" class="count"></span> </div> <div id="list"> <div class="empty">正在加载...</div> </div> </div> <div class="resizer" id="resizer"></div> <div class="preview"> <div class="toolbar"> <strong id="title" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">请选择文件</strong> <button id="download" class="btn" style="display:none" onclick="downloadFile()">下载</button> <button id="printBtn" class="btn secondary" style="display:none" onclick="printPreview()">打印</button> </div> <iframe id="frame" class="frame" srcdoc="<div class='empty'>选择左侧文件后在这里预览</div>"></iframe> </div> </div> <script> let files = [], selected = null, selectedIds = new Set(); async function loadFiles() { const r = await fetch('/api/files'); if (r.status === 401) { location.href = '/login'; return; } const j = await r.json(); files = j.files || []; files.sort((a, b) => new Date(b.createTime).getTime() - new Date(a.createTime).getTime()); render(); } function render() { const query = document.getElementById('q').value.trim().toLowerCase(); const filtered = query ? files.filter(f => f.filename.toLowerCase().includes(query) || f.relativePath.toLowerCase().includes(query) ) : files; document.getElementById('count').textContent = filtered.length + ' / ' + files.length + ' 个文件'; const listEl = document.getElementById('list'); listEl.innerHTML = ''; if (!filtered.length) { listEl.innerHTML = '<div class="empty">没有匹配的文件</div>'; return; } for (const f of filtered) { const div = document.createElement('div'); div.className = 'item'; const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = selectedIds.has(f.id); cb.onchange = (e) => { e.stopPropagation(); toggleSelect(f.id); }; div.appendChild(cb); const content = document.createElement('div'); content.className = 'item-content'; content.onclick = () => selectFile(f, div); content.innerHTML = '<div class="name">' + escapeHtml(f.filename) + '</div>' + '<div class="meta">' + escapeHtml(f.ownerClient) + ' · ' + escapeHtml(f.relativePath) + ' · ' + escapeHtml(f.humanSize || '') + '</div>' + '<div class="meta">创建时间：' + escapeHtml(f.createTime || '') + '</div>'; div.appendChild(content); listEl.appendChild(div); } updateBatchButton(); } function toggleSelect(id) { if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id); updateBatchButton(); document.getElementById('selectAll').checked = selectedIds.size === files.length; } function toggleSelectAll() { const checked = document.getElementById('selectAll').checked; if (checked) { files.forEach(f => selectedIds.add(f.id)); } else { selectedIds.clear(); } render(); } function updateBatchButton() { const btn = document.getElementById('batchDownloadBtn'); btn.disabled = selectedIds.size === 0; btn.textContent = '批量下载' + (selectedIds.size > 0 ? ' (' + selectedIds.size + ')' : ''); } function selectByDate() { const dateFrom = document.getElementById('dateFrom').value; if (!dateFrom) { alert('请选择起始日期'); return; } const fromTime = new Date(dateFrom).getTime(); selectedIds.clear(); files.forEach(f => { const createTime = new Date(f.createTime).getTime(); if (createTime >= fromTime) selectedIds.add(f.id); }); render(); } function clearDateFilter() { document.getElementById('dateFrom').value = ''; selectedIds.clear(); render(); } function selectFile(f, el) { selected = f; document.querySelectorAll('.item').forEach(x => x.classList.remove('active')); el.classList.add('active'); document.getElementById('title').textContent = f.filename; document.getElementById('download').style.display = 'inline-block'; document.getElementById('printBtn').style.display = 'inline-block'; const frameEl = document.getElementById('frame'); frameEl.removeAttribute('srcdoc'); frameEl.src = '/api/preview?id=' + encodeURIComponent(f.id); } function downloadFile() { if (selected) location.href = '/api/download?id=' + encodeURIComponent(selected.id); } async function downloadSelected() { if (selectedIds.size === 0) return; const ids = Array.from(selectedIds); if (ids.length === 1) { location.href = '/api/download?id=' + encodeURIComponent(ids[0]); return; } location.href = '/api/batch-download?ids=' + encodeURIComponent(ids.join(',')); } function printPreview() { const frameEl = document.getElementById('frame'); frameEl.contentWindow.focus(); frameEl.contentWindow.print(); } function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); } document.getElementById('q').addEventListener('input', render); const resizer = document.getElementById('resizer'); const leftPanel = document.getElementById('fileList'); let isResizing = false; resizer.addEventListener('mousedown', (e) => { isResizing = true; document.body.style.cursor = 'col-resize'; }); document.addEventListener('mousemove', (e) => { if (!isResizing) return; const newWidth = e.clientX; if (newWidth >= 200 && newWidth <= 800) { leftPanel.style.width = newWidth + 'px'; } }); document.addEventListener('mouseup', () => { isResizing = false; document.body.style.cursor = ''; }); loadFiles(); setInterval(() => { if (document.visibilityState === 'visible') { loadFiles(); } }, 10000); </script></body></html>)HTML";
+<!doctype html><html lang="zh-CN"><head> <meta charset="utf-8"> <meta name="viewport" content="width=device-width,initial-scale=1"> <title>CrossNetShare Web</title> <style> body{font-family:Segoe UI,Microsoft YaHei,sans-serif;margin:0;color:#101828;background:#f6f8fb} .top{height:64px;background:#1d3557;color:white;display:flex;align-items:center;gap:16px;padding:0 22px} .top h1{font-size:20px;margin:0} .search{flex:1;max-width:800px;display:flex;gap:8px;align-items:center} .search input{width:100%;border:0;border-radius:8px;padding:10px} .date-filter{display:flex;gap:8px;align-items:center;color:white;font-size:14px} .date-filter input[type="date"]{border:0;border-radius:6px;padding:6px;color:#111827} .top-actions{margin-left:auto;display:flex;gap:8px;align-items:center} .btn{border:0;border-radius:8px;padding:10px 14px;cursor:pointer;background:#2563eb;color:white;text-decoration:none;font-size:14px;white-space:nowrap} .btn.secondary{background:#e5e7eb;color:#111827} .btn:disabled{opacity:0.5;cursor:not-allowed} .layout{display:flex;height:calc(100vh - 64px)} .list{width:420px;min-width:200px;max-width:800px;border-right:1px solid #e4e7ec;background:white;overflow:auto} .list-header{padding:10px 14px;border-bottom:2px solid #e4e7ec;background:#f9fafb;display:flex;gap:8px;align-items:center} .item{padding:12px 14px;border-bottom:1px solid #eef2f7;cursor:pointer;display:flex;gap:10px;align-items:start} .item:hover{background:#eff6ff} .item.active{background:#dbeafe} .item input[type="checkbox"]{margin-top:4px;width:16px;height:16px;cursor:pointer} .item-content{flex:1;min-width:0} .name{font-weight:600} .meta{font-size:12px;color:#667085;margin-top:4px} .preview{flex:1;display:flex;flex-direction:column;min-width:0;max-height:calc(100vh - 64px);overflow:hidden} .toolbar{background:white;border-bottom:1px solid #e4e7ec;padding:10px;display:flex;gap:8px;align-items:center;overflow-x:auto;flex-shrink:0} .frame{border:0;background:white;margin:16px;border-radius:10px;box-shadow:0 1px 3px #0000001a;width:100%;height:100%;flex:1;min-height:0} .empty{padding:40px;color:#667085;text-align:center} .text-preview{white-space:pre-wrap;padding:20px} .count{color:#667085;font-size:13px} .resizer{width:5px;cursor:col-resize;background:#f3f4f6;flex-shrink:0} .resizer:hover{background:#d1d5db} </style></head><body> <div class="top"> <h1>CrossNetShare Web</h1> <div class="search"> <input id="q" placeholder="输入关键词实时过滤文件"> </div> <div class="date-filter"> <label>日期筛选:</label> <input type="date" id="dateFrom" style="width:150px"> <button id="selectByDateBtn" class="btn" onclick="selectByDate()">选择</button> <button id="clearDateBtn" class="btn secondary" onclick="clearDateFilter()">清除</button> </div> <div class="top-actions"> <button class="btn" onclick="downloadSelected()" id="batchDownloadBtn" disabled>批量下载</button> <a class="btn secondary" href="/api/logout">退出</a> </div> </div> <div class="layout"> <div class="list" id="fileList"> <div class="list-header"> <input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> <label for="selectAll" style="flex:1;cursor:pointer">全选 / 全不选</label> <span id="count" class="count"></span> </div> <div id="list"> <div class="empty">正在加载...</div> </div> </div> <div class="resizer" id="resizer"></div> <div class="preview"> <div class="toolbar"> <strong id="title" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">请选择文件</strong> <button id="download" class="btn" style="display:none" onclick="downloadFile()">下载</button> <button id="printBtn" class="btn secondary" style="display:none" onclick="printPreview()">打印</button> </div> <iframe id="frame" class="frame" srcdoc="<div class='empty'>选择左侧文件后在这里预览</div>"></iframe> </div> </div> <script> let files = [], selected = null, userPermission = 2, selectedIds = new Set(); async function loadFiles() { const r = await fetch('/api/files'); if (r.status === 401) { location.href = '/login'; return; } const j = await r.json(); files = j.files || []; files.sort((a, b) => new Date(b.createTime).getTime() - new Date(a.createTime).getTime()); render(); } function render() { const query = document.getElementById('q').value.trim().toLowerCase(); const filtered = query ? files.filter(f => f.filename.toLowerCase().includes(query) || f.relativePath.toLowerCase().includes(query) ) : files; document.getElementById('count').textContent = filtered.length + ' / ' + files.length + ' 个文件'; const listEl = document.getElementById('list'); listEl.innerHTML = ''; if (!filtered.length) { listEl.innerHTML = '<div class="empty">没有匹配的文件</div>'; return; } for (const f of filtered) { const div = document.createElement('div'); div.className = 'item'; const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = selectedIds.has(f.id); cb.onchange = (e) => { e.stopPropagation(); toggleSelect(f.id); }; div.appendChild(cb); const content = document.createElement('div'); content.className = 'item-content'; content.onclick = () => selectFile(f, div); content.innerHTML = '<div class="name">' + escapeHtml(f.filename) + '</div>' + '<div class="meta">' + escapeHtml(f.ownerClient) + ' · ' + escapeHtml(f.relativePath) + ' · ' + escapeHtml(f.humanSize || '') + '</div>' + '<div class="meta">创建时间：' + escapeHtml(f.createTime || '') + '</div>'; div.appendChild(content); listEl.appendChild(div); } updateBatchButton(); } function toggleSelect(id) { if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id); updateBatchButton(); document.getElementById('selectAll').checked = selectedIds.size === files.length; } function toggleSelectAll() { const checked = document.getElementById('selectAll').checked; if (checked) { files.forEach(f => selectedIds.add(f.id)); } else { selectedIds.clear(); } render(); } function updateBatchButton() { const btn = document.getElementById('batchDownloadBtn'); btn.disabled = selectedIds.size === 0; btn.textContent = '批量下载' + (selectedIds.size > 0 ? ' (' + selectedIds.size + ')' : ''); } function selectByDate() { const dateFrom = document.getElementById('dateFrom').value; if (!dateFrom) { alert('请选择起始日期'); return; } const fromTime = new Date(dateFrom).getTime(); selectedIds.clear(); files.forEach(f => { const createTime = new Date(f.createTime).getTime(); if (createTime >= fromTime) selectedIds.add(f.id); }); render(); } function clearDateFilter() { document.getElementById('dateFrom').value = ''; selectedIds.clear(); render(); } function selectFile(f, el) { selected = f; document.querySelectorAll('.item').forEach(x => x.classList.remove('active')); el.classList.add('active'); document.getElementById('title').textContent = f.filename; document.getElementById('download').style.display = 'inline-block'; document.getElementById('printBtn').style.display = 'inline-block'; const frameEl = document.getElementById('frame'); frameEl.removeAttribute('srcdoc'); frameEl.src = '/api/preview?id=' + encodeURIComponent(f.id); } function downloadFile() { if (selected) location.href = '/api/download?id=' + encodeURIComponent(selected.id); } async function downloadSelected() { if (selectedIds.size === 0) return; const ids = Array.from(selectedIds); if (ids.length === 1) { location.href = '/api/download?id=' + encodeURIComponent(ids[0]); return; } location.href = '/api/batch-download?ids=' + encodeURIComponent(ids.join(',')); } function printPreview() { const frameEl = document.getElementById('frame'); frameEl.contentWindow.focus(); frameEl.contentWindow.print(); } function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); } document.getElementById('q').addEventListener('input', render); const resizer = document.getElementById('resizer'); const leftPanel = document.getElementById('fileList'); let isResizing = false; resizer.addEventListener('mousedown', (e) => { isResizing = true; document.body.style.cursor = 'col-resize'; }); document.addEventListener('mousemove', (e) => { if (!isResizing) return; const newWidth = e.clientX; if (newWidth >= 200 && newWidth <= 800) { leftPanel.style.width = newWidth + 'px'; } }); document.addEventListener('mouseup', () => { isResizing = false; document.body.style.cursor = ''; }); async function loadUserPermission() { try { const res = await fetch("/api/user"); const data = await res.json(); if (data.success) { userPermission = data.user.permissionLevel; applyPermissionRestrictions(); } } catch (e) { console.error("Failed to load user permission", e); } } function applyPermissionRestrictions() { if (userPermission === 0) { document.getElementById("download")?.remove(); document.getElementById("printBtn")?.remove(); document.getElementById("batchDownloadBtn")?.remove(); document.getElementById("selectAllBtn")?.remove(); document.getElementById("deselectBtn")?.remove(); document.getElementById("selectByDateBtn")?.remove(); document.getElementById("clearDateBtn")?.remove(); document.querySelector(".date-filter")?.remove(); } else if (userPermission === 1) { document.getElementById("download")?.remove(); document.getElementById("batchDownloadBtn")?.remove(); document.getElementById("selectAllBtn")?.remove(); document.getElementById("deselectBtn")?.remove(); document.getElementById("selectByDateBtn")?.remove(); document.getElementById("clearDateBtn")?.remove(); document.querySelector(".date-filter")?.remove(); } } loadFiles(); loadUserPermission(); setInterval(() => { if (document.visibilityState === 'visible') { loadFiles(); } }, 10000); </script></body></html>)HTML";
     HttpResponse response;
     response.headers["Content-Type"] = "text/html; charset=utf-8";
     response.body = html;
