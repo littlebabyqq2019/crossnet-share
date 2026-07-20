@@ -12,6 +12,7 @@ namespace CrossNetShare {
 
 class WebServer;
 class AuthManager;
+class WatermarkService;
 
 struct ServerConfig {
     quint16 port;

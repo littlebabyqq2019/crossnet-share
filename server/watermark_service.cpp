@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QStandardPaths>
 #include <QDateTime>
+#include <cmath>
 
 namespace CrossNetShare {
 
@@ -460,7 +461,7 @@ QImage WatermarkService::addWatermark(const QImage& source, const QString& text)
     painter.save();
 
     // 计算旋转后需要绘制的范围
-    int diagonal = qSqrt(result.width() * result.width() + result.height() * result.height());
+    int diagonal = static_cast<int>(std::sqrt(result.width() * result.width() + result.height() * result.height()));
 
     // 平移到中心，旋转
     painter.translate(result.width() / 2, result.height() / 2);

@@ -38,6 +38,7 @@ private:
     void loadSettings();
     void saveSettings();
     void updateKeywordsTable();
+    void updateColorButton();
 
     WatermarkService* watermarkService_;
 
