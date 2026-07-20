@@ -6,6 +6,7 @@
 #include <QColorDialog>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QProcess>
 
 namespace CrossNetShare {
 
@@ -127,6 +128,8 @@ void WatermarkSettingsDialog::setupUi() {
 
     // === 对话框按钮 ===
     QHBoxLayout* buttonLayout = new QHBoxLayout();
+    detectLibreOfficeButton_ = new QPushButton("检测 LibreOffice", this);
+    buttonLayout->addWidget(detectLibreOfficeButton_);
     buttonLayout->addStretch();
     saveButton_ = new QPushButton("保存", this);
     cancelButton_ = new QPushButton("取消", this);
@@ -138,6 +141,7 @@ void WatermarkSettingsDialog::setupUi() {
     connect(addButton_, &QPushButton::clicked, this, &WatermarkSettingsDialog::onAddKeywordClicked);
     connect(editButton_, &QPushButton::clicked, this, &WatermarkSettingsDialog::onEditKeywordClicked);
     connect(deleteButton_, &QPushButton::clicked, this, &WatermarkSettingsDialog::onDeleteKeywordClicked);
+    connect(detectLibreOfficeButton_, &QPushButton::clicked, this, &WatermarkSettingsDialog::onDetectLibreOfficeClicked);
     connect(saveButton_, &QPushButton::clicked, this, &WatermarkSettingsDialog::onSaveClicked);
     connect(cancelButton_, &QPushButton::clicked, this, &WatermarkSettingsDialog::onCancelClicked);
     connect(fontSizeSpinBox_, QOverload<int>::of(&QSpinBox::valueChanged), this, &WatermarkSettingsDialog::onFontSizeChanged);
@@ -352,6 +356,48 @@ void WatermarkSettingsDialog::onEnableWatermarkToggled(bool checked) {
     opacitySlider_->setEnabled(checked);
     rotationSlider_->setEnabled(checked);
     densityComboBox_->setEnabled(checked);
+}
+
+void WatermarkSettingsDialog::onDetectLibreOfficeClicked() {
+    QStringList possibleCommands = {"soffice", "soffice.exe", "libreoffice", "libreoffice.exe"};
+    QString foundCommand;
+    QString version;
+
+    // 检测 LibreOffice
+    for (const QString& cmd : possibleCommands) {
+        QProcess testProcess;
+        testProcess.start(cmd, QStringList() << "--version");
+        if (testProcess.waitForStarted(2000)) {
+            if (testProcess.waitForFinished(5000)) {
+                foundCommand = cmd;
+                version = QString::fromLocal8Bit(testProcess.readAllStandardOutput()).trimmed();
+                break;
+            }
+        }
+    }
+
+    // 显示结果
+    if (!foundCommand.isEmpty()) {
+        QMessageBox::information(this, "LibreOffice 检测",
+            QString("✅ 找到 LibreOffice！\n\n"
+                    "命令: %1\n"
+                    "版本: %2\n\n"
+                    "水印功能可以正常使用。")
+            .arg(foundCommand)
+            .arg(version));
+    } else {
+        QMessageBox::warning(this, "LibreOffice 检测",
+            QString("❌ 未找到 LibreOffice！\n\n"
+                    "尝试的命令: %1\n\n"
+                    "请按以下步骤操作：\n"
+                    "1. 下载 LibreOffice: https://www.libreoffice.org/download/\n"
+                    "2. 安装到系统（建议默认路径）\n"
+                    "3. 将 LibreOffice 安装目录添加到系统 PATH 环境变量\n"
+                    "   例如: C:\\Program Files\\LibreOffice\\program\n"
+                    "4. 重启 CrossNetShare 服务器\n\n"
+                    "没有 LibreOffice，水印功能将无法使用。")
+            .arg(possibleCommands.join(", ")));
+    }
 }
 
 }

@@ -32,6 +32,7 @@ private slots:
     void onRotationChanged(int value);
     void onColorButtonClicked();
     void onEnableWatermarkToggled(bool checked);
+    void onDetectLibreOfficeClicked();
 
 private:
     void setupUi();
@@ -67,6 +68,7 @@ private:
     // 对话框按钮
     QPushButton* saveButton_;
     QPushButton* cancelButton_;
+    QPushButton* detectLibreOfficeButton_;
 
     // 当前颜色
     QColor currentColor_;
