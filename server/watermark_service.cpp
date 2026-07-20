@@ -312,7 +312,28 @@ QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const Q
          << wordFilePath;
 
     emit logMessage("Converting Word to HTML using: " + sofficePath);
+    emit logMessage("Input file: " + wordFilePath);
+    emit logMessage("Output dir: " + outputDir);
+    emit logMessage("Command: " + sofficePath + " " + args.join(" "));
+
+    // 检查输入文件是否存在
+    if (!QFile::exists(wordFilePath)) {
+        emit logMessage("Error: Input Word file does not exist: " + wordFilePath);
+        return QString();
+    }
+
+    // 确保输出目录存在
+    QDir dir(outputDir);
+    if (!dir.exists()) {
+        emit logMessage("Creating output directory: " + outputDir);
+        if (!dir.mkpath(".")) {
+            emit logMessage("Error: Failed to create output directory");
+            return QString();
+        }
+    }
+
     QProcess process;
+    process.setWorkingDirectory(outputDir);
     process.start(sofficePath, args);
 
     if (!process.waitForStarted(5000)) {
@@ -376,7 +397,27 @@ QString WatermarkService::convertWordToJpg(const QString& wordFilePath, const QS
          << wordFilePath;
 
     emit logMessage("Converting Word to JPG using: " + sofficePath);
+    emit logMessage("Input file: " + wordFilePath);
+    emit logMessage("Output dir: " + outputDir);
+    emit logMessage("Command: " + sofficePath + " " + args.join(" "));
+
+    // 检查输入文件是否存在
+    if (!QFile::exists(wordFilePath)) {
+        emit logMessage("Error: Input Word file does not exist: " + wordFilePath);
+        return QString();
+    }
+
+    // 确保输出目录存在
+    QDir dir(outputDir);
+    if (!dir.exists()) {
+        if (!dir.mkpath(".")) {
+            emit logMessage("Error: Failed to create output directory");
+            return QString();
+        }
+    }
+
     QProcess process;
+    process.setWorkingDirectory(outputDir);
     process.start(sofficePath, args);
 
     if (!process.waitForStarted(5000)) {
