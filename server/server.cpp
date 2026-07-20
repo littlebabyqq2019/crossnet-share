@@ -135,6 +135,10 @@ void Server::setConfig(const ServerConfig& config) {
     }
 }
 
+void Server::setWatermarkService(WatermarkService* watermarkService) {
+    webServer_->setWatermarkService(watermarkService);
+}
+
 QStringList Server::getConnectedClients() const {
     QStringList clients;
     for (const ClientHandler* client : clients_) {

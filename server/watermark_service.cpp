@@ -1,0 +1,534 @@
+#include "watermark_service.h"
+#include <QProcess>
+#include <QFile>
+#include <QDir>
+#include <QXmlStreamReader>
+#include <QPainter>
+#include <QFontMetrics>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QStandardPaths>
+#include <QDateTime>
+
+namespace CrossNetShare {
+
+WatermarkService::WatermarkService(QObject* parent)
+    : QObject(parent)
+{
+    // 设置默认配置路径
+    QString appDataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    configPath_ = appDataPath + "/watermark_config.json";
+
+    // 加载配置
+    loadConfig();
+}
+
+WatermarkService::~WatermarkService() {
+    saveConfig();
+}
+
+bool WatermarkService::loadConfig(const QString& configPath) {
+    QString path = configPath.isEmpty() ? configPath_ : configPath;
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        emit logMessage("Watermark config not found, using defaults");
+
+        // 设置默认关键词
+        keywords_ = {
+            KeywordRule("党政办", "党政办", true),
+            KeywordRule("医政科", "医政科", true),
+            KeywordRule("公卫科", "公卫科", true),
+            KeywordRule("中医科", "中医科", true),
+            KeywordRule("法监科", "法监科", true),
+            KeywordRule("家庭发展科", "家庭发展科", true),
+            KeywordRule("健康促进科（爱卫办）", "健康促进科", true),
+            KeywordRule("办公室（后勤）", "办公室（后勤）", true),
+            KeywordRule("办公室（财务）", "办公室（财务）", true),
+            KeywordRule("信息中心", "信息中心", true),
+            KeywordRule("计生协", "计生协", true),
+            KeywordRule("疾控中心（监督所、健教所）", "疾控中心", true),
+            KeywordRule("妇计中心", "妇计中心", true),
+            KeywordRule("中心医院", "中心医院", true),
+            KeywordRule("大雁塔", "大雁塔", true),
+            KeywordRule("小寨路", "小寨路", true),
+            KeywordRule("长延堡", "长延堡", true),
+            KeywordRule("电子城", "电子城", true),
+            KeywordRule("等驾坡", "等驾坡", true),
+            KeywordRule("曲江", "曲江", true),
+            KeywordRule("杜城", "杜城", true),
+            KeywordRule("各科室", "各科室", true),
+            KeywordRule("各单位", "各单位", true),
+            KeywordRule("各科室、各单位", "全体科室单位", true)
+        };
+
+        return false;
+    }
+
+    QByteArray data = file.readAll();
+    file.close();
+
+    QJsonDocument doc = QJsonDocument::fromJson(data);
+    if (!doc.isObject()) {
+        emit logMessage("Invalid watermark config format");
+        return false;
+    }
+
+    QJsonObject root = doc.object();
+
+    // 加载水印样式
+    if (root.contains("watermarkStyle")) {
+        QJsonObject style = root["watermarkStyle"].toObject();
+        config_.fontSize = style["fontSize"].toInt(14);
+        config_.color = QColor(style["color"].toString("#808080"));
+        config_.opacity = style["opacity"].toInt(30);
+        config_.rotation = style["rotation"].toInt(45);
+        config_.density = style["density"].toString("medium");
+        config_.enableUnified = style["enableUnified"].toBool(false);
+        config_.unifiedText = style["unifiedText"].toString("");
+        config_.enabled = style["enabled"].toBool(false);
+    }
+
+    // 加载关键词
+    keywords_.clear();
+    if (root.contains("keywords")) {
+        QJsonArray keywordsArray = root["keywords"].toArray();
+        for (const QJsonValue& val : keywordsArray) {
+            QJsonObject obj = val.toObject();
+            KeywordRule rule;
+            rule.detectText = obj["detectText"].toString();
+            rule.watermarkText = obj["watermarkText"].toString();
+            rule.enabled = obj["enabled"].toBool(true);
+            keywords_.append(rule);
+        }
+    }
+
+    emit logMessage("Watermark config loaded successfully");
+    return true;
+}
+
+bool WatermarkService::saveConfig(const QString& configPath) {
+    QString path = configPath.isEmpty() ? configPath_ : configPath;
+
+    // 确保目录存在
+    QFileInfo fileInfo(path);
+    QDir dir = fileInfo.dir();
+    if (!dir.exists()) {
+        dir.mkpath(".");
+    }
+
+    QJsonObject root;
+
+    // 保存水印样式
+    QJsonObject style;
+    style["fontSize"] = config_.fontSize;
+    style["color"] = config_.color.name();
+    style["opacity"] = config_.opacity;
+    style["rotation"] = config_.rotation;
+    style["density"] = config_.density;
+    style["enableUnified"] = config_.enableUnified;
+    style["unifiedText"] = config_.unifiedText;
+    style["enabled"] = config_.enabled;
+    root["watermarkStyle"] = style;
+
+    // 保存关键词
+    QJsonArray keywordsArray;
+    for (const KeywordRule& rule : keywords_) {
+        QJsonObject obj;
+        obj["detectText"] = rule.detectText;
+        obj["watermarkText"] = rule.watermarkText;
+        obj["enabled"] = rule.enabled;
+        keywordsArray.append(obj);
+    }
+    root["keywords"] = keywordsArray;
+
+    QJsonDocument doc(root);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        emit logMessage("Failed to save watermark config: " + file.errorString());
+        return false;
+    }
+
+    file.write(doc.toJson(QJsonDocument::Indented));
+    file.close();
+
+    emit logMessage("Watermark config saved successfully");
+    return true;
+}
+
+void WatermarkService::setConfig(const WatermarkConfig& config) {
+    config_ = config;
+}
+
+void WatermarkService::setKeywords(const QList<KeywordRule>& keywords) {
+    keywords_ = keywords;
+}
+
+WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
+    const QString& wordFilePath,
+    const QString& outputDir,
+    const QString& originalFileName)
+{
+    WatermarkResult result;
+
+    // 检查功能是否启用
+    if (!config_.enabled) {
+        result.error = "Watermark feature is disabled";
+        return result;
+    }
+
+    emit progress("开始处理文档...", 1, 5);
+    emit logMessage("Processing: " + wordFilePath);
+
+    // 1. 转换 Word 为 HTML（提取表格内容）
+    emit progress("解析文档表格...", 2, 5);
+    QString htmlPath = convertWordToHtml(wordFilePath, outputDir);
+    if (htmlPath.isEmpty()) {
+        result.error = "Failed to convert Word to HTML";
+        return result;
+    }
+
+    // 2. 提取拟办意见文本
+    QString opinionText = extractOpinionText(htmlPath);
+    if (opinionText.isEmpty()) {
+        emit logMessage("Warning: No opinion text found in row 7, column 2");
+    }
+
+    // 3. 匹配关键词
+    QStringList matchedKeywords;
+    if (config_.enableUnified) {
+        // 统一水印模式：使用配置的统一文字
+        if (!config_.unifiedText.isEmpty()) {
+            matchedKeywords.append(config_.unifiedText);
+        }
+    } else {
+        // 关键词模式：匹配检测到的关键词
+        matchedKeywords = matchKeywords(opinionText);
+    }
+
+    if (matchedKeywords.isEmpty()) {
+        // 没有匹配到关键词，生成无水印原图
+        emit logMessage("No keywords matched, generating original image");
+        matchedKeywords.append("");  // 空字符串表示无水印
+    }
+
+    // 4. 转换 Word 为 JPG
+    emit progress("转换文档为图片...", 3, 5);
+    QString baseImagePath = convertWordToJpg(wordFilePath, outputDir);
+    if (baseImagePath.isEmpty()) {
+        result.error = "Failed to convert Word to JPG";
+        return result;
+    }
+
+    QImage baseImage(baseImagePath);
+    if (baseImage.isNull()) {
+        result.error = "Failed to load generated image";
+        return result;
+    }
+
+    // 5. 为每个关键词生成带水印的图片
+    emit progress("生成水印图片...", 4, 5);
+    QStringList generatedImages;
+    QString baseName = QFileInfo(originalFileName).completeBaseName();
+
+    int current = 0;
+    for (const QString& keyword : matchedKeywords) {
+        current++;
+
+        QImage watermarkedImage;
+        QString outputFileName;
+
+        if (keyword.isEmpty()) {
+            // 无水印原图
+            watermarkedImage = baseImage;
+            outputFileName = baseName + ".jpg";
+        } else {
+            // 添加水印
+            watermarkedImage = addWatermark(baseImage, keyword);
+            outputFileName = keyword + "-" + baseName + ".jpg";
+        }
+
+        QString outputPath = outputDir + "/" + outputFileName;
+        if (!watermarkedImage.save(outputPath, "JPG", 95)) {
+            emit logMessage("Warning: Failed to save " + outputFileName);
+            continue;
+        }
+
+        generatedImages.append(outputPath);
+        result.generatedFiles.append(outputFileName);
+
+        emit logMessage("Generated: " + outputFileName);
+    }
+
+    if (generatedImages.isEmpty()) {
+        result.error = "No images generated";
+        return result;
+    }
+
+    // 6. 打包为 ZIP
+    emit progress("打包图片...", 5, 5);
+    result.zipFilePath = createZipFile(generatedImages, outputDir, baseName + "_水印图片");
+
+    // 7. 清理临时文件
+    QFile::remove(htmlPath);
+    QFile::remove(baseImagePath);
+    for (const QString& imagePath : generatedImages) {
+        // ZIP 创建后删除临时图片文件
+        // QFile::remove(imagePath);  // 暂时保留，方便调试
+    }
+
+    result.success = true;
+    emit progress("完成！", 5, 5);
+    return result;
+}
+
+QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const QString& outputDir) {
+    QStringList args;
+    args << "--headless"
+         << "--convert-to" << "html:HTML:EmbedImages"
+         << "--outdir" << outputDir
+         << wordFilePath;
+
+    QProcess process;
+    process.start("soffice", args);
+
+    if (!process.waitForStarted(5000)) {
+        emit logMessage("Error: Failed to start LibreOffice");
+        return QString();
+    }
+
+    if (!process.waitForFinished(30000)) {
+        emit logMessage("Error: LibreOffice conversion timeout");
+        process.kill();
+        return QString();
+    }
+
+    if (process.exitCode() != 0) {
+        emit logMessage("Error: LibreOffice conversion failed: " + QString::fromLocal8Bit(process.readAllStandardError()));
+        return QString();
+    }
+
+    // 计算输出文件名
+    QString baseName = QFileInfo(wordFilePath).completeBaseName();
+    QString htmlPath = outputDir + "/" + baseName + ".html";
+
+    if (!QFile::exists(htmlPath)) {
+        emit logMessage("Error: HTML file not generated: " + htmlPath);
+        return QString();
+    }
+
+    return htmlPath;
+}
+
+QString WatermarkService::convertWordToJpg(const QString& wordFilePath, const QString& outputDir) {
+    QStringList args;
+    args << "--headless"
+         << "--convert-to" << "jpg"
+         << "--outdir" << outputDir
+         << wordFilePath;
+
+    QProcess process;
+    process.start("soffice", args);
+
+    if (!process.waitForStarted(5000)) {
+        emit logMessage("Error: Failed to start LibreOffice for JPG conversion");
+        return QString();
+    }
+
+    if (!process.waitForFinished(30000)) {
+        emit logMessage("Error: LibreOffice JPG conversion timeout");
+        process.kill();
+        return QString();
+    }
+
+    if (process.exitCode() != 0) {
+        emit logMessage("Error: LibreOffice JPG conversion failed: " + QString::fromLocal8Bit(process.readAllStandardError()));
+        return QString();
+    }
+
+    // 计算输出文件名
+    QString baseName = QFileInfo(wordFilePath).completeBaseName();
+    QString jpgPath = outputDir + "/" + baseName + ".jpg";
+
+    if (!QFile::exists(jpgPath)) {
+        emit logMessage("Error: JPG file not generated: " + jpgPath);
+        return QString();
+    }
+
+    return jpgPath;
+}
+
+QString WatermarkService::extractOpinionText(const QString& htmlFilePath) {
+    QFile file(htmlFilePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        emit logMessage("Error: Failed to open HTML file: " + htmlFilePath);
+        return QString();
+    }
+
+    QXmlStreamReader xml(&file);
+    int rowIndex = 0;
+    int colIndex = 0;
+    bool inTable = false;
+
+    while (!xml.atEnd()) {
+        xml.readNext();
+
+        if (xml.isStartElement()) {
+            QString name = xml.name().toString().toLower();
+
+            if (name == "table") {
+                inTable = true;
+                rowIndex = 0;
+            } else if (inTable && name == "tr") {
+                rowIndex++;
+                colIndex = 0;
+            } else if (inTable && (name == "td" || name == "th")) {
+                colIndex++;
+
+                if (rowIndex == 7 && colIndex == 2) {
+                    QString text = xml.readElementText().trimmed();
+                    file.close();
+                    return text;
+                }
+            }
+        } else if (xml.isEndElement()) {
+            QString name = xml.name().toString().toLower();
+            if (name == "table") {
+                inTable = false;
+            }
+        }
+    }
+
+    file.close();
+
+    if (xml.hasError()) {
+        emit logMessage("Warning: XML parsing error: " + xml.errorString());
+    }
+
+    return QString();
+}
+
+QStringList WatermarkService::matchKeywords(const QString& text) {
+    QStringList matched;
+
+    for (const KeywordRule& rule : keywords_) {
+        if (!rule.enabled) {
+            continue;
+        }
+
+        // 精确匹配整个短语
+        if (text.contains(rule.detectText)) {
+            matched.append(rule.watermarkText);
+            emit logMessage("Matched keyword: " + rule.detectText + " -> " + rule.watermarkText);
+        }
+    }
+
+    return matched;
+}
+
+QImage WatermarkService::addWatermark(const QImage& source, const QString& text) {
+    QImage result = source.copy();
+    QPainter painter(&result);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+
+    // 设置字体
+    QFont font("SimSun", config_.fontSize);
+    painter.setFont(font);
+
+    // 设置颜色和透明度
+    QColor color = config_.color;
+    color.setAlpha(255 * config_.opacity / 100);
+    painter.setPen(color);
+
+    // 计算文字尺寸
+    QFontMetrics fm(font);
+    QRect textRect = fm.boundingRect(text);
+
+    // 根据密度计算间距
+    int baseSpacing = qMax(textRect.width(), textRect.height()) * 2;
+    int spacing = baseSpacing;
+    if (config_.density == "sparse") {
+        spacing = baseSpacing * 2;
+    } else if (config_.density == "dense") {
+        spacing = baseSpacing;
+    } else {  // medium
+        spacing = baseSpacing * 1.5;
+    }
+
+    // 保存当前状态
+    painter.save();
+
+    // 计算旋转后需要绘制的范围
+    int diagonal = qSqrt(result.width() * result.width() + result.height() * result.height());
+
+    // 平移到中心，旋转
+    painter.translate(result.width() / 2, result.height() / 2);
+    painter.rotate(config_.rotation);
+    painter.translate(-result.width() / 2, -result.height() / 2);
+
+    // 满铺绘制水印
+    for (int y = -diagonal; y < result.height() + diagonal; y += spacing) {
+        for (int x = -diagonal; x < result.width() + diagonal; x += spacing) {
+            painter.drawText(x, y, text);
+        }
+    }
+
+    painter.restore();
+    painter.end();
+
+    return result;
+}
+
+QString WatermarkService::createZipFile(const QStringList& imagePaths, const QString& outputDir, const QString& baseName) {
+    // 简化版：直接返回第一个文件（如果只有一个）
+    // 完整版需要使用 QuaZip 或调用系统压缩命令
+
+    if (imagePaths.size() == 1) {
+        return imagePaths.first();
+    }
+
+    // TODO: 实现 ZIP 打包
+    // 临时方案：返回第一个文件
+    QString zipPath = outputDir + "/" + baseName + ".zip";
+
+    // 使用系统 tar 命令打包（Windows 10+ 支持）
+    QStringList fileNames;
+    for (const QString& path : imagePaths) {
+        fileNames.append(QFileInfo(path).fileName());
+    }
+
+    QProcess process;
+    process.setWorkingDirectory(outputDir);
+
+    #ifdef Q_OS_WIN
+    // Windows: 使用 PowerShell Compress-Archive
+    QString filesArg = fileNames.join("','");
+    QStringList args;
+    args << "-Command"
+         << QString("Compress-Archive -Path '%1' -DestinationPath '%2' -Force")
+            .arg(filesArg, QFileInfo(zipPath).fileName());
+    process.start("powershell", args);
+    #else
+    // Linux/Mac: 使用 zip
+    QStringList args;
+    args << zipPath;
+    args.append(fileNames);
+    process.start("zip", args);
+    #endif
+
+    if (!process.waitForFinished(10000)) {
+        emit logMessage("Warning: ZIP creation timeout");
+        process.kill();
+        return imagePaths.first();
+    }
+
+    if (QFile::exists(zipPath)) {
+        return zipPath;
+    }
+
+    emit logMessage("Warning: ZIP creation failed, returning first image");
+    return imagePaths.first();
+}
+
+}

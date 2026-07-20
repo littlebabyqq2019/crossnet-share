@@ -12,6 +12,7 @@ namespace CrossNetShare {
 class FileIndexer;
 class AuthManager;
 class Server;
+class WatermarkService;
 
 struct HttpRequest {
     QString method;         // GET, POST, etc.
@@ -46,6 +47,7 @@ public:
 
     void setAuthManager(AuthManager* authManager);
     void setServer(Server* server);
+    void setWatermarkService(WatermarkService* watermarkService);
 
 signals:
     void started();
@@ -72,6 +74,7 @@ private:
     void handleFileDownload(QTcpSocket* socket, const HttpRequest& request);
     void handleBatchDownload(QTcpSocket* socket, const HttpRequest& request);
     void handleFilePreview(QTcpSocket* socket, const HttpRequest& request);
+    void handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& request);
 
     // Static file serving
     void serveStaticFile(QTcpSocket* socket, const QString& path);
@@ -87,6 +90,7 @@ private:
     FileIndexer* indexer_;
     AuthManager* authManager_;
     Server* server_;
+    WatermarkService* watermarkService_;
     bool running_;
     quint16 port_;
 

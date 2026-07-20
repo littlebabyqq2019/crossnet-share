@@ -15,6 +15,8 @@
 
 namespace CrossNetShare {
 
+class WatermarkService;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -36,6 +38,7 @@ private slots:
     void onServerError(const QString& errorMsg);
     void onCleanupCache();
     void onSettingsClicked();
+    void onWatermarkSettingsClicked();
     void onTrayIconActivated(QSystemTrayIcon::ActivationReason reason);
     void onShowWindow();
     void onQuitApp();
@@ -47,6 +50,7 @@ private:
     void appendLog(const QString& message);
 
     Server* server_;
+    WatermarkService* watermarkService_;
     QTimer* cacheCleanupTimer_;
 
     // UI控件

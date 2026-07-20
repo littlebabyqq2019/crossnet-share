@@ -1,0 +1,107 @@
+#pragma once
+
+#include <QObject>
+#include <QString>
+#include <QStringList>
+#include <QColor>
+#include <QImage>
+#include <QJsonObject>
+#include <vector>
+
+namespace CrossNetShare {
+
+class WatermarkService : public QObject {
+    Q_OBJECT
+
+public:
+    // 水印配置
+    struct WatermarkConfig {
+        int fontSize;           // 字号
+        QColor color;           // 颜色
+        int opacity;            // 透明度 0-100
+        int rotation;           // 旋转角度
+        QString density;        // 密度: sparse/medium/dense
+        bool enableUnified;     // 启用统一水印
+        QString unifiedText;    // 统一水印文字
+        bool enabled;           // 全局启用水印功能
+
+        WatermarkConfig()
+            : fontSize(14)
+            , color(128, 128, 128)  // 灰色
+            , opacity(30)
+            , rotation(45)
+            , density("medium")
+            , enableUnified(false)
+            , enabled(false)
+        {}
+    };
+
+    // 关键词规则
+    struct KeywordRule {
+        QString detectText;     // 检测文本
+        QString watermarkText;  // 水印文本
+        bool enabled;           // 是否启用
+
+        KeywordRule(const QString& detect = "", const QString& watermark = "", bool en = true)
+            : detectText(detect), watermarkText(watermark), enabled(en) {}
+    };
+
+    // 水印生成结果
+    struct WatermarkResult {
+        bool success;
+        QStringList generatedFiles;  // 生成的图片文件名（不含路径）
+        QString zipFilePath;         // ZIP 文件路径
+        QString error;
+
+        WatermarkResult() : success(false) {}
+    };
+
+    explicit WatermarkService(QObject* parent = nullptr);
+    ~WatermarkService();
+
+    // 加载/保存配置
+    bool loadConfig(const QString& configPath = "");
+    bool saveConfig(const QString& configPath = "");
+
+    // 配置访问
+    WatermarkConfig getConfig() const { return config_; }
+    void setConfig(const WatermarkConfig& config);
+
+    QList<KeywordRule> getKeywords() const { return keywords_; }
+    void setKeywords(const QList<KeywordRule>& keywords);
+
+    // 生成带水印的图片
+    WatermarkResult generateWatermarkedImages(
+        const QString& wordFilePath,
+        const QString& outputDir,
+        const QString& originalFileName
+    );
+
+signals:
+    void progress(const QString& message, int current, int total);
+    void logMessage(const QString& message);
+
+private:
+    // Word 文档处理
+    QString convertWordToHtml(const QString& wordFilePath, const QString& outputDir);
+    QString convertWordToJpg(const QString& wordFilePath, const QString& outputDir);
+
+    // 表格解析
+    QString extractOpinionText(const QString& htmlFilePath);
+
+    // 关键词匹配
+    QStringList matchKeywords(const QString& text);
+
+    // 水印绘制
+    QImage addWatermark(const QImage& source, const QString& text);
+
+    // 打包 ZIP
+    QString createZipFile(const QStringList& imagePaths, const QString& outputDir, const QString& baseName);
+
+    // 配置
+    WatermarkConfig config_;
+    QList<KeywordRule> keywords_;
+    QString configPath_;
+};
+
+}

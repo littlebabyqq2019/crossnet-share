@@ -42,6 +42,8 @@ public:
     FileIndexer* getIndexer() { return &indexer_; }
     WebServer* getWebServer() { return webServer_; }
 
+    void setWatermarkService(WatermarkService* watermarkService);
+
     // 获取已连接的客户端列表
     QStringList getConnectedClients() const;
 

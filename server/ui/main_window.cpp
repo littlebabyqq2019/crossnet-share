@@ -1,5 +1,7 @@
 #include "main_window.h"
 #include "settings_dialog.h"
+#include "watermark_settings_dialog.h"
+#include "../watermark_service.h"
 #include "../document_converter.h"
 #include "common/autostart.h"
 #include <QVBoxLayout>
@@ -18,6 +20,7 @@ namespace CrossNetShare {
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , server_(new Server(this))
+    , watermarkService_(new WatermarkService(this))
     , cacheCleanupTimer_(new QTimer(this))
     , trayIcon_(nullptr)
     , trayMenu_(nullptr)
@@ -31,6 +34,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(server_, &Server::clientDisconnected, this, &MainWindow::onClientDisconnected);
     connect(server_, &Server::logMessage, this, &MainWindow::onLogMessage);
     connect(server_, &Server::error, this, &MainWindow::onServerError);
+
+    // 设置水印服务到服务器
+    server_->setWatermarkService(watermarkService_);
 
     connect(cacheCleanupTimer_, &QTimer::timeout, this, &MainWindow::onCleanupCache);
     cacheCleanupTimer_->start(3600000);
@@ -211,6 +217,15 @@ void MainWindow::setupUi() {
     settingsButton->setMinimumHeight(42);
     connect(settingsButton, &QPushButton::clicked, this, &MainWindow::onSettingsClicked);
     buttonLayout->addWidget(settingsButton);
+
+    QPushButton* watermarkButton = new QPushButton("水印设置");
+    watermarkButton->setStyleSheet(
+        "QPushButton { padding: 10px 24px; font-size: 10pt; background-color: white; border: 1px solid #d1d5db; border-radius: 6px; } "
+        "QPushButton:hover { background-color: #f3f4f6; }"
+    );
+    watermarkButton->setMinimumHeight(42);
+    connect(watermarkButton, &QPushButton::clicked, this, &MainWindow::onWatermarkSettingsClicked);
+    buttonLayout->addWidget(watermarkButton);
 
     buttonLayout->addStretch();
     configMainLayout->addLayout(buttonLayout);
@@ -393,6 +408,11 @@ void MainWindow::onCleanupCache() {
 
 void MainWindow::onSettingsClicked() {
     SettingsDialog dialog(this);
+    dialog.exec();
+}
+
+void MainWindow::onWatermarkSettingsClicked() {
+    WatermarkSettingsDialog dialog(watermarkService_, this);
     dialog.exec();
 }
 

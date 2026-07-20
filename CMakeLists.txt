@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(CrossNetShare VERSION 1.1.0 LANGUAGES CXX)
+project(CrossNetShare VERSION 1.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -65,6 +65,8 @@ if(WIN32)
         server/audit_logger.h
         server/document_converter.cpp
         server/document_converter.h
+        server/watermark_service.cpp
+        server/watermark_service.h
         server/ui/main_window.cpp
         server/ui/main_window.h
         server/ui/settings_dialog.cpp
@@ -73,6 +75,8 @@ if(WIN32)
         server/ui/user_management_dialog.h
         server/ui/audit_log_dialog.cpp
         server/ui/audit_log_dialog.h
+        server/ui/watermark_settings_dialog.cpp
+        server/ui/watermark_settings_dialog.h
         server/server.rc
     )
 else()
@@ -96,6 +100,8 @@ else()
         server/audit_logger.h
         server/document_converter.cpp
         server/document_converter.h
+        server/watermark_service.cpp
+        server/watermark_service.h
         server/ui/main_window.cpp
         server/ui/main_window.h
         server/ui/settings_dialog.cpp
