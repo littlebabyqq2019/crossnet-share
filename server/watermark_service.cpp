@@ -411,31 +411,6 @@ QString WatermarkService::convertWordToJpg(const QString& wordFilePath, const QS
     emit logMessage("Successfully converted to JPG: " + jpgPath);
     return jpgPath;
 }
-        return QString();
-    }
-
-    if (!process.waitForFinished(30000)) {
-        emit logMessage("Error: LibreOffice JPG conversion timeout");
-        process.kill();
-        return QString();
-    }
-
-    if (process.exitCode() != 0) {
-        emit logMessage("Error: LibreOffice JPG conversion failed: " + QString::fromLocal8Bit(process.readAllStandardError()));
-        return QString();
-    }
-
-    // 计算输出文件名
-    QString baseName = QFileInfo(wordFilePath).completeBaseName();
-    QString jpgPath = outputDir + "/" + baseName + ".jpg";
-
-    if (!QFile::exists(jpgPath)) {
-        emit logMessage("Error: JPG file not generated: " + jpgPath);
-        return QString();
-    }
-
-    return jpgPath;
-}
 
 QString WatermarkService::extractOpinionText(const QString& htmlFilePath) {
     QFile file(htmlFilePath);
