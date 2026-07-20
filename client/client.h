@@ -6,6 +6,7 @@
 #include <QTcpSocket>
 #include <QByteArray>
 #include <QTimer>
+#include <QFileSystemWatcher>
 #include <functional>
 
 namespace CrossNetShare {
@@ -72,6 +73,9 @@ private slots:
     void onDisconnected();
     void onReadyRead();
     void onError(QAbstractSocket::SocketError error);
+    void onDirectoryChanged(const QString& path);
+    void onFileChanged(const QString& path);
+    void onRefreshTimerTimeout();
 
 private:
     void handleMessage(MessageType type, const nlohmann::json& payload);
@@ -102,6 +106,10 @@ private:
     // 配置信息
     QString clientId_;
     QString sharePath_;
+
+    // 文件监视器
+    QFileSystemWatcher* fileWatcher_;
+    QTimer* refreshTimer_;  // 延迟刷新定时器，避免频繁更新
 
     // 当前下载状态
     struct DownloadState {

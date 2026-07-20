@@ -16,6 +16,8 @@ Client::Client(QObject* parent)
     , autoReconnect_(false)
     , serverPort_(0)
     , reconnectAttempts_(0)
+    , fileWatcher_(new QFileSystemWatcher(this))
+    , refreshTimer_(new QTimer(this))
 {
     connect(socket_, &QTcpSocket::connected, this, &Client::onConnected);
     connect(socket_, &QTcpSocket::disconnected, this, &Client::onDisconnected);
@@ -32,6 +34,15 @@ Client::Client(QObject* parent)
             socket_->connectToHost(serverHost_, serverPort_);
         }
     });
+
+    // 配置文件监视器
+    connect(fileWatcher_, &QFileSystemWatcher::directoryChanged, this, &Client::onDirectoryChanged);
+    connect(fileWatcher_, &QFileSystemWatcher::fileChanged, this, &Client::onFileChanged);
+
+    // 配置刷新定时器（延迟2秒刷新，避免频繁更新）
+    refreshTimer_->setSingleShot(true);
+    refreshTimer_->setInterval(2000);
+    connect(refreshTimer_, &QTimer::timeout, this, &Client::onRefreshTimerTimeout);
 }
 
 Client::~Client() {
@@ -106,6 +117,16 @@ void Client::registerClient(const QString& clientId, const QString& sharePath) {
 
     sendMessage(MessageType::REGISTER_CLIENT, payload);
     emit logMessage("Registering client: " + clientId + " with " + QString::number(files.size()) + " files");
+
+    // 启动文件监视器
+    if (!fileWatcher_->directories().isEmpty()) {
+        fileWatcher_->removePaths(fileWatcher_->directories());
+    }
+    if (fileWatcher_->addPath(sharePath)) {
+        emit logMessage("File watcher started for: " + sharePath);
+    } else {
+        emit logMessage("Warning: Failed to start file watcher for: " + sharePath);
+    }
 }
 
 void Client::requestFileList(const QString& targetClient) {
@@ -501,6 +522,50 @@ bool Client::loadConfig(const QString& configPath) {
 
     emit logMessage("Configuration loaded from " + configPath);
     return true;
+}
+
+void Client::onDirectoryChanged(const QString& path) {
+    Q_UNUSED(path)
+    // 目录变化，启动延迟刷新定时器
+    if (!refreshTimer_->isActive()) {
+        emit logMessage("Directory changed, scheduling refresh...");
+    }
+    refreshTimer_->start();
+}
+
+void Client::onFileChanged(const QString& path) {
+    Q_UNUSED(path)
+    // 文件变化，启动延迟刷新定时器
+    if (!refreshTimer_->isActive()) {
+        emit logMessage("File changed, scheduling refresh...");
+    }
+    refreshTimer_->start();
+}
+
+void Client::onRefreshTimerTimeout() {
+    // 延迟刷新：重新扫描并发送更新到服务器
+    if (!connected_ || sharePath_.isEmpty() || clientId_.isEmpty()) {
+        return;
+    }
+
+    emit logMessage("Refreshing file list due to changes...");
+
+    // 重新扫描共享目录
+    std::vector<FileMetadata> files = FileUtils::scanDirectory(sharePath_);
+
+    // 发送更新到服务器（使用 REGISTER_CLIENT 消息类型）
+    nlohmann::json payload;
+    payload["clientId"] = clientId_.toStdString();
+    payload["sharePath"] = sharePath_.toStdString();
+
+    nlohmann::json fileList = nlohmann::json::array();
+    for (const auto& file : files) {
+        fileList.push_back(Protocol::fileMetadataToJson(file));
+    }
+    payload["files"] = fileList;
+
+    sendMessage(MessageType::REGISTER_CLIENT, payload);
+    emit logMessage("File list updated: " + QString::number(files.size()) + " files");
 }
 
 }
