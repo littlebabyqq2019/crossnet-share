@@ -1,4 +1,5 @@
 #include "watermark_service.h"
+#include "document_converter.h"
 #include <QProcess>
 #include <QFile>
 #include <QDir>
@@ -9,6 +10,7 @@
 #include <QJsonArray>
 #include <QStandardPaths>
 #include <QDateTime>
+#include <QTemporaryFile>
 #include <cmath>
 
 namespace CrossNetShare {
@@ -213,11 +215,19 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         matchedKeywords.append("");  // 空字符串表示无水印
     }
 
-    // 4. 转换 Word 为 JPG
-    emit progress("转换文档为图片...", 3, 5);
-    QString baseImagePath = convertWordToJpg(wordFilePath, outputDir);
+    // 4. 转换 Word 为 PDF（使用 DocumentConverter，处理 WordML 格式）
+    emit progress("转换文档为 PDF...", 3, 5);
+    QString pdfPath = convertWordToPdf(wordFilePath, outputDir);
+    if (pdfPath.isEmpty()) {
+        result.error = "Failed to convert Word to PDF";
+        return result;
+    }
+
+    // 5. 转换 PDF 为 JPG
+    emit progress("转换文档为图片...", 4, 5);
+    QString baseImagePath = convertPdfToJpg(pdfPath, outputDir);
     if (baseImagePath.isEmpty()) {
-        result.error = "Failed to convert Word to JPG";
+        result.error = "Failed to convert PDF to JPG";
         return result;
     }
 
@@ -250,8 +260,8 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         }
     }
 
-    // 5. 为每个关键词生成带水印的图片
-    emit progress("生成水印图片...", 4, 5);
+    // 6. 为每个关键词生成带水印的图片
+    emit progress("生成水印图片...", 5, 5);
     QStringList generatedImages;
     QString baseName = QFileInfo(originalFileName).completeBaseName();
 
@@ -289,12 +299,13 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         return result;
     }
 
-    // 6. 打包为 ZIP
-    emit progress("打包图片...", 5, 5);
+    // 7. 打包为 ZIP
+    emit progress("打包图片...", 6, 6);
     result.zipFilePath = createZipFile(generatedImages, outputDir, baseName + "_水印图片");
 
-    // 7. 清理临时文件
+    // 8. 清理临时文件
     QFile::remove(htmlPath);
+    QFile::remove(pdfPath);
     QFile::remove(baseImagePath);
     for (const QString& imagePath : generatedImages) {
         // ZIP 创建后删除临时图片文件
@@ -302,8 +313,130 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
     }
 
     result.success = true;
-    emit progress("完成！", 5, 5);
+    emit progress("完成！", 6, 6);
     return result;
+}
+
+QString WatermarkService::convertWordToPdf(const QString& wordFilePath, const QString& outputDir) {
+    emit logMessage("Converting Word to PDF using DocumentConverter...");
+
+    // 使用 DocumentConverter 转换（会自动使用缓存）
+    DocumentConverter::PreviewResult pdfResult = DocumentConverter::previewFile(wordFilePath);
+
+    if (!pdfResult.success) {
+        emit logMessage("Error: Failed to convert Word to PDF: " + pdfResult.error);
+        return QString();
+    }
+
+    if (pdfResult.mimeType != "application/pdf") {
+        emit logMessage("Error: Expected PDF output but got: " + pdfResult.mimeType);
+        return QString();
+    }
+
+    // 保存 PDF 到临时目录
+    QString pdfPath = outputDir + "/" + QFileInfo(wordFilePath).completeBaseName() + ".pdf";
+    QFile pdfFile(pdfPath);
+    if (!pdfFile.open(QIODevice::WriteOnly)) {
+        emit logMessage("Error: Failed to write PDF file: " + pdfPath);
+        return QString();
+    }
+
+    pdfFile.write(pdfResult.data);
+    pdfFile.close();
+
+    emit logMessage("Successfully converted to PDF: " + pdfPath);
+    return pdfPath;
+}
+
+QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QString& outputDir) {
+    // 尝试多个可能的 LibreOffice 可执行文件名
+    QStringList possibleCommands = {"soffice", "soffice.exe", "libreoffice", "libreoffice.exe"};
+    QString sofficePath;
+
+    // 检查哪个命令可用
+    for (const QString& cmd : possibleCommands) {
+        QProcess testProcess;
+        testProcess.start(cmd, QStringList() << "--version");
+        if (testProcess.waitForStarted(1000)) {
+            testProcess.waitForFinished(3000);
+            sofficePath = cmd;
+            break;
+        }
+    }
+
+    if (sofficePath.isEmpty()) {
+        emit logMessage("Error: LibreOffice not found for PDF to JPG conversion");
+        return QString();
+    }
+
+    QStringList args;
+    args << "--headless"
+         << "--convert-to" << "jpg"
+         << "--outdir" << outputDir
+         << pdfFilePath;
+
+    emit logMessage("Converting PDF to JPG using: " + sofficePath);
+    emit logMessage("Input PDF: " + pdfFilePath);
+    emit logMessage("Output dir: " + outputDir);
+    emit logMessage("Command: " + sofficePath + " " + args.join(" "));
+
+    // 检查输入文件是否存在
+    if (!QFile::exists(pdfFilePath)) {
+        emit logMessage("Error: Input PDF file does not exist: " + pdfFilePath);
+        return QString();
+    }
+
+    // 确保输出目录存在
+    QDir dir(outputDir);
+    if (!dir.exists()) {
+        if (!dir.mkpath(".")) {
+            emit logMessage("Error: Failed to create output directory");
+            return QString();
+        }
+    }
+
+    QProcess process;
+    process.setWorkingDirectory(outputDir);
+    process.start(sofficePath, args);
+
+    if (!process.waitForStarted(5000)) {
+        emit logMessage("Error: Failed to start LibreOffice for PDF to JPG conversion");
+        return QString();
+    }
+
+    if (!process.waitForFinished(30000)) {
+        emit logMessage("Error: LibreOffice PDF to JPG conversion timeout");
+        process.kill();
+        return QString();
+    }
+
+    if (process.exitCode() != 0) {
+        QString stderr_output = QString::fromLocal8Bit(process.readAllStandardError());
+        QString stdout_output = QString::fromLocal8Bit(process.readAllStandardOutput());
+        emit logMessage("Error: LibreOffice PDF to JPG conversion failed (exit code: " + QString::number(process.exitCode()) + ")");
+        if (!stderr_output.isEmpty()) emit logMessage("stderr: " + stderr_output);
+        if (!stdout_output.isEmpty()) emit logMessage("stdout: " + stdout_output);
+        return QString();
+    }
+
+    // 计算输出文件名
+    QString baseName = QFileInfo(pdfFilePath).completeBaseName();
+    QString jpgPath = outputDir + "/" + baseName + ".jpg";
+
+    // LibreOffice 可能生成多页，检查第一页
+    if (!QFile::exists(jpgPath)) {
+        QString firstPagePath = outputDir + "/" + baseName + "_1.jpg";
+        if (QFile::exists(firstPagePath)) {
+            jpgPath = firstPagePath;
+            emit logMessage("Multi-page PDF detected, using first page");
+        } else {
+            emit logMessage("Error: JPG file not generated. Expected: " + jpgPath);
+            return QString();
+        }
+    }
+
+    emit logMessage("Successfully converted PDF to JPG: " + jpgPath);
+    return jpgPath;
 }
 
 QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const QString& outputDir) {

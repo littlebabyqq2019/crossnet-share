@@ -83,6 +83,8 @@ signals:
 
 private:
     // Word 文档处理
+    QString convertWordToPdf(const QString& wordFilePath, const QString& outputDir);
+    QString convertPdfToJpg(const QString& pdfFilePath, const QString& outputDir);
     QString convertWordToHtml(const QString& wordFilePath, const QString& outputDir);
     QString convertWordToJpg(const QString& wordFilePath, const QString& outputDir);
 
