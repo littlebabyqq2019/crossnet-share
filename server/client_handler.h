@@ -42,6 +42,9 @@ public:
     };
     FileRequestResult requestFileSync(const QString& relativePath, int timeoutMs = 30000);
 
+    // 请求客户端刷新文件索引
+    void requestRefresh();
+
 signals:
     void disconnected(const QString& clientId);
     void logMessage(const QString& message);

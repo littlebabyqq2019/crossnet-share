@@ -213,12 +213,9 @@ void Server::onDirectoryChanged(const QString& clientId, const QString& path) {
 
 void Server::requestAllClientsRefresh() {
     int count = 0;
-    for (ClientHandler* handler : clientHandlers_) {
+    for (ClientHandler* handler : clients_) {
         if (handler) {
-            // 发送刷新请求消息
-            nlohmann::json payload;
-            payload["message"] = "Server requested index refresh";
-            handler->sendMessage(MessageType::REFRESH_INDEX_REQUEST, payload);
+            handler->requestRefresh();
             count++;
         }
     }

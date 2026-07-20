@@ -484,4 +484,10 @@ ClientHandler::FileRequestResult ClientHandler::requestFileSync(const QString& r
     return result;
 }
 
+void ClientHandler::requestRefresh() {
+    nlohmann::json payload;
+    payload["message"] = "Server requested index refresh";
+    sendMessage(MessageType::REFRESH_INDEX_REQUEST, payload);
+}
+
 }
