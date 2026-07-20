@@ -211,4 +211,18 @@ void Server::onDirectoryChanged(const QString& clientId, const QString& path) {
     emit logMessage("Auto-refreshed index for client: " + clientId);
 }
 
+void Server::requestAllClientsRefresh() {
+    int count = 0;
+    for (ClientHandler* handler : clientHandlers_) {
+        if (handler) {
+            // 发送刷新请求消息
+            nlohmann::json payload;
+            payload["message"] = "Server requested index refresh";
+            handler->sendMessage(MessageType::REFRESH_INDEX_REQUEST, payload);
+            count++;
+        }
+    }
+    emit logMessage("Sent refresh request to " + QString::number(count) + " connected clients");
+}
+
 }

@@ -39,9 +39,9 @@ Client::Client(QObject* parent)
     connect(fileWatcher_, &QFileSystemWatcher::directoryChanged, this, &Client::onDirectoryChanged);
     connect(fileWatcher_, &QFileSystemWatcher::fileChanged, this, &Client::onFileChanged);
 
-    // 配置刷新定时器（延迟2秒刷新，避免频繁更新）
+    // 配置刷新定时器（延迟2分钟刷新，避免频繁更新）
     refreshTimer_->setSingleShot(true);
-    refreshTimer_->setInterval(2000);
+    refreshTimer_->setInterval(120000);  // 2分钟 = 120000毫秒
     connect(refreshTimer_, &QTimer::timeout, this, &Client::onRefreshTimerTimeout);
 }
 
@@ -284,6 +284,10 @@ void Client::handleMessage(MessageType type, const nlohmann::json& payload) {
         handleFilteredFilesResponse(payload);
         break;
 
+    case MessageType::REFRESH_INDEX_REQUEST:
+        handleRefreshIndexRequest(payload);
+        break;
+
     case MessageType::DOWNLOAD_REQUEST:
         handleDownloadRequest(payload);
         break;
@@ -339,6 +343,30 @@ void Client::handleFileListResponse(const nlohmann::json& payload) {
 
 void Client::handleFilteredFilesResponse(const nlohmann::json& payload) {
     handleFileListResponse(payload);
+}
+
+void Client::handleRefreshIndexRequest(const nlohmann::json& payload) {
+    Q_UNUSED(payload)
+    // 服务器请求刷新文件列表
+    emit logMessage("Server requested index refresh, rescanning...");
+
+    // 立即重新扫描并发送更新
+    if (!sharePath_.isEmpty() && !clientId_.isEmpty()) {
+        std::vector<FileMetadata> files = FileUtils::scanDirectory(sharePath_);
+
+        nlohmann::json refreshPayload;
+        refreshPayload["clientId"] = clientId_.toStdString();
+        refreshPayload["sharePath"] = sharePath_.toStdString();
+
+        nlohmann::json fileList = nlohmann::json::array();
+        for (const auto& file : files) {
+            fileList.push_back(Protocol::fileMetadataToJson(file));
+        }
+        refreshPayload["files"] = fileList;
+
+        sendMessage(MessageType::REGISTER_CLIENT, refreshPayload);
+        emit logMessage("Index refreshed: " + QString::number(files.size()) + " files sent to server");
+    }
 }
 
 void Client::handleDownloadRequest(const nlohmann::json& payload) {

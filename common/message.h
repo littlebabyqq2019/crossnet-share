@@ -15,6 +15,7 @@ enum class MessageType {
     // 文件列表和索引
     REQUEST_FILE_LIST,
     FILE_LIST_RESPONSE,
+    REFRESH_INDEX_REQUEST,  // 服务器请求客户端刷新文件列表
 
     // 文件筛选（按日期）
     REQUEST_FILTERED_FILES,

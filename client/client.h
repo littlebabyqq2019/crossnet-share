@@ -82,6 +82,7 @@ private:
     void handleRegisterResponse(const nlohmann::json& payload);
     void handleFileListResponse(const nlohmann::json& payload);
     void handleFilteredFilesResponse(const nlohmann::json& payload);
+    void handleRefreshIndexRequest(const nlohmann::json& payload);
     void handleDownloadRequest(const nlohmann::json& payload);
     void handleDownloadResponse(const nlohmann::json& payload);
     void handleFileData(const nlohmann::json& payload);

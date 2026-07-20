@@ -48,6 +48,9 @@ public:
     // 根据clientId查找对应的ClientHandler
     ClientHandler* findClientHandler(const QString& clientId) const;
 
+    // 请求所有在线客户端刷新文件列表
+    void requestAllClientsRefresh();
+
 signals:
     void started();
     void stopped();

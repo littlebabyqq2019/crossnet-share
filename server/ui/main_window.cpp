@@ -294,8 +294,13 @@ void MainWindow::onStartStopClicked() {
 }
 
 void MainWindow::onRefreshIndexClicked() {
-    // 触发索引刷新（会在下次文件请求时自动重建）
-    appendLog("索引刷新请求已发送");
+    // 请求所有在线客户端刷新文件列表
+    if (server_) {
+        server_->requestAllClientsRefresh();
+        appendLog("已向所有在线客户端发送刷新请求");
+    } else {
+        appendLog("服务器未运行");
+    }
 }
 
 void MainWindow::onServerStarted() {
