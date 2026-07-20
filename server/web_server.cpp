@@ -436,56 +436,41 @@ void WebServer::handleFileDownload(QTcpSocket* socket, const HttpRequest& reques
     QString fullPath = indexer_->resolveFilePath(clientId, relativePath);
     QFileInfo info(fullPath);
 
-    // 检查客户端是否在线
+    // 只从在线客户端获取文件，不使用服务器本地文件
     ClientHandler* handler = server_ ? server_->findClientHandler(clientId) : nullptr;
 
-    if (handler) {
-        // 客户端在线，从远程客户端获取
-        auto result = handler->requestFileSync(relativePath, 60000);
-        if (result.success) {
-            // 记录下载日志
-            AuditLogger::instance()->log(username, AuditAction::DownloadFile, relativePath, socket->peerAddress().toString(), true);
-
-            HttpResponse response;
-            response.headers["Content-Type"] = "application/octet-stream";
-            response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding(QFileInfo(relativePath).fileName()));
-            response.body = result.data;
-            sendResponse(socket, response);
-            return;
-        } else {
-            HttpResponse response;
-            response.statusCode = 500;
-            response.statusText = "Internal Server Error";
-            response.headers["Content-Type"] = "text/html; charset=utf-8";
-            response.body = "<html><body><h1>Download Failed</h1><p>" + result.error.toHtmlEscaped().toUtf8() + "</p></body></html>";
-            sendResponse(socket, response);
-            return;
-        }
+    if (!handler) {
+        // 客户端未连接
+        HttpResponse response;
+        response.statusCode = 503;
+        response.statusText = "Service Unavailable";
+        response.headers["Content-Type"] = "text/html; charset=utf-8";
+        response.body = "<html><body><h1>Client Not Connected</h1>"
+                        "<p>The client that owns this file is not currently connected.</p></body></html>";
+        sendResponse(socket, response);
+        return;
     }
 
-    // 客户端离线，尝试使用本地文件（如果是服务器本机客户端）
-    if (info.exists() && info.isFile()) {
-        QFile file(fullPath);
-        if (file.open(QIODevice::ReadOnly)) {
-            // 记录下载日志
-            AuditLogger::instance()->log(username, AuditAction::DownloadFile, relativePath, socket->peerAddress().toString(), true);
+    // 从远程客户端获取
+    auto result = handler->requestFileSync(relativePath, 60000);
+    if (result.success) {
+        // 记录下载日志
+        AuditLogger::instance()->log(username, AuditAction::DownloadFile, relativePath, socket->peerAddress().toString(), true);
 
-            HttpResponse response;
-            response.headers["Content-Type"] = "application/octet-stream";
-            response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding(info.fileName()));
-            response.body = file.readAll();
-            sendResponse(socket, response);
-            return;
-        }
+        HttpResponse response;
+        response.headers["Content-Type"] = "application/octet-stream";
+        response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding(QFileInfo(relativePath).fileName()));
+        response.body = result.data;
+        sendResponse(socket, response);
+        return;
     }
 
-    // 客户端未连接且本地文件不存在
+    // 获取失败
     HttpResponse response;
-    response.statusCode = 503;
-    response.statusText = "Service Unavailable";
+    response.statusCode = 500;
+    response.statusText = "Internal Server Error";
     response.headers["Content-Type"] = "text/html; charset=utf-8";
-    response.body = "<html><body><h1>Client Not Connected</h1>"
-                    "<p>The client that owns this file is not currently connected.</p></body></html>";
+    response.body = "<html><body><h1>Download Failed</h1><p>" + result.error.toHtmlEscaped().toUtf8() + "</p></body></html>";
     sendResponse(socket, response);
 }
 
@@ -523,11 +508,11 @@ void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& reque
         QString fullPath = indexer_->resolveFilePath(clientId, relativePath);
         QFileInfo info(fullPath);
 
-        // 检查客户端是否在线
+        // 只从在线客户端获取文件
         ClientHandler* handler = server_ ? server_->findClientHandler(clientId) : nullptr;
 
         if (handler) {
-            // 客户端在线，从远程客户端获取
+            // 从远程客户端获取
             auto result = handler->requestFileSync(relativePath, 60000);
             if (result.success && !result.data.isEmpty()) {
                 // 保存到临时文件（使用唯一ID避免冲突，但保持原始文件名）
@@ -541,11 +526,8 @@ void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& reque
                     fileNames.append(info.fileName());
                 }
             }
-        } else if (info.exists() && info.isFile()) {
-            // 客户端离线，尝试使用本地文件（如果是服务器本机客户端）
-            filePaths.append(fullPath);
-            fileNames.append(info.fileName());
         }
+        // 如果客户端离线，跳过该文件（不使用服务器本地文件）
     }
 
     if (filePaths.isEmpty()) {
@@ -662,72 +644,56 @@ void WebServer::handleFilePreview(QTcpSocket* socket, const HttpRequest& request
     QString fullPath = indexer_->resolveFilePath(clientId, relativePath);
     QFileInfo info(fullPath);
 
-    // 检查客户端是否在线
+    // 只从在线客户端获取文件
     ClientHandler* handler = server_ ? server_->findClientHandler(clientId) : nullptr;
 
-    if (handler) {
-        // 客户端在线，从远程客户端获取
-        auto result = handler->requestFileSync(relativePath, 60000);
-        if (result.success) {
-            // 将文件数据写入临时文件用于预览
-            QString uniqueId = QDateTime::currentDateTime().toString("yyyyMMddHHmmsszzz");
-            QString tempPath = QDir::temp().filePath("preview_" + uniqueId + "_" + QFileInfo(relativePath).fileName());
-            QFile tempFile(tempPath);
-            if (tempFile.open(QIODevice::WriteOnly)) {
-                tempFile.write(result.data);
-                tempFile.close();
+    if (!handler) {
+        // 客户端未连接
+        HttpResponse response;
+        response.statusCode = 503;
+        response.statusText = "Service Unavailable";
+        response.headers["Content-Type"] = "text/html; charset=utf-8";
+        response.body = "<div class=\"empty\">Client not connected. Cannot preview remote file.</div>";
+        sendResponse(socket, response);
+        return;
+    }
 
-                auto preview = DocumentConverter::previewFile(tempPath);
-                HttpResponse response;
-                if (!preview.success) {
-                    response.statusCode = 415;
-                    response.statusText = "Unsupported Media Type";
-                    response.headers["Content-Type"] = "text/html; charset=utf-8";
-                    response.body = "<div class=\"empty\">" + preview.error.toHtmlEscaped().toUtf8() + "</div>";
-                } else {
-                    response.headers["Content-Type"] = preview.mimeType;
-                    response.body = preview.data;
-                }
+    // 从远程客户端获取
+    auto result = handler->requestFileSync(relativePath, 60000);
+    if (result.success) {
+        // 将文件数据写入临时文件用于预览
+        QString uniqueId = QDateTime::currentDateTime().toString("yyyyMMddHHmmsszzz");
+        QString tempPath = QDir::temp().filePath("preview_" + uniqueId + "_" + QFileInfo(relativePath).fileName());
+        QFile tempFile(tempPath);
+        if (tempFile.open(QIODevice::WriteOnly)) {
+            tempFile.write(result.data);
+            tempFile.close();
 
-                // 清理临时文件
-                QFile::remove(tempPath);
-                sendResponse(socket, response);
-                return;
-            }
-        } else {
+            auto preview = DocumentConverter::previewFile(tempPath);
             HttpResponse response;
-            response.statusCode = 500;
-            response.statusText = "Internal Server Error";
-            response.headers["Content-Type"] = "text/html; charset=utf-8";
-            response.body = "<div class=\"empty\">Preview failed: " + result.error.toHtmlEscaped().toUtf8() + "</div>";
+            if (!preview.success) {
+                response.statusCode = 415;
+                response.statusText = "Unsupported Media Type";
+                response.headers["Content-Type"] = "text/html; charset=utf-8";
+                response.body = "<div class=\"empty\">" + preview.error.toHtmlEscaped().toUtf8() + "</div>";
+            } else {
+                response.headers["Content-Type"] = preview.mimeType;
+                response.body = preview.data;
+            }
+
+            // 清理临时文件
+            QFile::remove(tempPath);
             sendResponse(socket, response);
             return;
         }
     }
 
-    // 客户端离线，尝试使用本地文件（如果是服务器本机客户端）
-    if (info.exists()) {
-        auto preview = DocumentConverter::previewFile(fullPath);
-        HttpResponse response;
-        if (!preview.success) {
-            response.statusCode = 415;
-            response.statusText = "Unsupported Media Type";
-            response.headers["Content-Type"] = "text/html; charset=utf-8";
-            response.body = "<div class=\"empty\">" + preview.error.toHtmlEscaped().toUtf8() + "</div>";
-        } else {
-            response.headers["Content-Type"] = preview.mimeType;
-            response.body = preview.data;
-        }
-        sendResponse(socket, response);
-        return;
-    }
-
-    // 客户端未连接且本地文件不存在
+    // 获取失败
     HttpResponse response;
-    response.statusCode = 503;
-    response.statusText = "Service Unavailable";
+    response.statusCode = 500;
+    response.statusText = "Internal Server Error";
     response.headers["Content-Type"] = "text/html; charset=utf-8";
-    response.body = "<div class=\"empty\">Client not connected. Cannot preview remote file.</div>";
+    response.body = "<div class=\"empty\">Preview failed: " + result.error.toHtmlEscaped().toUtf8() + "</div>";
     sendResponse(socket, response);
 }
 
