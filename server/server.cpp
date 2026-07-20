@@ -193,8 +193,10 @@ void Server::onClientRegistered(const QString& clientId, const QString& sharePat
         emit clientConnected(clientId, handler->getClientAddress());
         emit logMessage("Client '" + clientId + "' registered with share path: " + sharePath);
 
-        // 开始监控该客户端的共享目录
-        fileWatcher_->addWatchPath(clientId, sharePath);
+        // 不要监视远程客户端的共享路径
+        // 远程客户端的路径在服务器上没有意义，监视会导致错误地扫描服务器本地同名路径
+        // 远程客户端应该自己检测变化并主动推送更新
+        // fileWatcher_->addWatchPath(clientId, sharePath);  // REMOVED: causes index pollution
     }
 }
 
