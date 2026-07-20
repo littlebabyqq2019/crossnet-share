@@ -284,17 +284,39 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
 }
 
 QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const QString& outputDir) {
+    // 尝试多个可能的 LibreOffice 可执行文件名
+    QStringList possibleCommands = {"soffice", "soffice.exe", "libreoffice", "libreoffice.exe"};
+    QString sofficePath;
+
+    // 检查哪个命令可用
+    for (const QString& cmd : possibleCommands) {
+        QProcess testProcess;
+        testProcess.start(cmd, QStringList() << "--version");
+        if (testProcess.waitForStarted(1000)) {
+            testProcess.waitForFinished(3000);
+            sofficePath = cmd;
+            break;
+        }
+    }
+
+    if (sofficePath.isEmpty()) {
+        emit logMessage("Error: LibreOffice not found. Please install LibreOffice and ensure it's in PATH.");
+        emit logMessage("Tried commands: " + possibleCommands.join(", "));
+        return QString();
+    }
+
     QStringList args;
     args << "--headless"
          << "--convert-to" << "html:HTML:EmbedImages"
          << "--outdir" << outputDir
          << wordFilePath;
 
+    emit logMessage("Converting Word to HTML using: " + sofficePath);
     QProcess process;
-    process.start("soffice", args);
+    process.start(sofficePath, args);
 
     if (!process.waitForStarted(5000)) {
-        emit logMessage("Error: Failed to start LibreOffice");
+        emit logMessage("Error: Failed to start LibreOffice (" + sofficePath + ")");
         return QString();
     }
 
@@ -305,7 +327,11 @@ QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const Q
     }
 
     if (process.exitCode() != 0) {
-        emit logMessage("Error: LibreOffice conversion failed: " + QString::fromLocal8Bit(process.readAllStandardError()));
+        QString stderr_output = QString::fromLocal8Bit(process.readAllStandardError());
+        QString stdout_output = QString::fromLocal8Bit(process.readAllStandardOutput());
+        emit logMessage("Error: LibreOffice conversion failed (exit code: " + QString::number(process.exitCode()) + ")");
+        if (!stderr_output.isEmpty()) emit logMessage("stderr: " + stderr_output);
+        if (!stdout_output.isEmpty()) emit logMessage("stdout: " + stdout_output);
         return QString();
     }
 
@@ -318,21 +344,73 @@ QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const Q
         return QString();
     }
 
+    emit logMessage("Successfully converted to HTML: " + htmlPath);
     return htmlPath;
 }
 
 QString WatermarkService::convertWordToJpg(const QString& wordFilePath, const QString& outputDir) {
+    // 尝试多个可能的 LibreOffice 可执行文件名
+    QStringList possibleCommands = {"soffice", "soffice.exe", "libreoffice", "libreoffice.exe"};
+    QString sofficePath;
+
+    // 检查哪个命令可用
+    for (const QString& cmd : possibleCommands) {
+        QProcess testProcess;
+        testProcess.start(cmd, QStringList() << "--version");
+        if (testProcess.waitForStarted(1000)) {
+            testProcess.waitForFinished(3000);
+            sofficePath = cmd;
+            break;
+        }
+    }
+
+    if (sofficePath.isEmpty()) {
+        emit logMessage("Error: LibreOffice not found for JPG conversion");
+        return QString();
+    }
+
     QStringList args;
     args << "--headless"
          << "--convert-to" << "jpg"
          << "--outdir" << outputDir
          << wordFilePath;
 
+    emit logMessage("Converting Word to JPG using: " + sofficePath);
     QProcess process;
-    process.start("soffice", args);
+    process.start(sofficePath, args);
 
     if (!process.waitForStarted(5000)) {
         emit logMessage("Error: Failed to start LibreOffice for JPG conversion");
+        return QString();
+    }
+
+    if (!process.waitForFinished(30000)) {
+        emit logMessage("Error: LibreOffice JPG conversion timeout");
+        process.kill();
+        return QString();
+    }
+
+    if (process.exitCode() != 0) {
+        QString stderr_output = QString::fromLocal8Bit(process.readAllStandardError());
+        QString stdout_output = QString::fromLocal8Bit(process.readAllStandardOutput());
+        emit logMessage("Error: LibreOffice JPG conversion failed (exit code: " + QString::number(process.exitCode()) + ")");
+        if (!stderr_output.isEmpty()) emit logMessage("stderr: " + stderr_output);
+        if (!stdout_output.isEmpty()) emit logMessage("stdout: " + stdout_output);
+        return QString();
+    }
+
+    // 计算输出文件名
+    QString baseName = QFileInfo(wordFilePath).completeBaseName();
+    QString jpgPath = outputDir + "/" + baseName + ".jpg";
+
+    if (!QFile::exists(jpgPath)) {
+        emit logMessage("Error: JPG file not generated: " + jpgPath);
+        return QString();
+    }
+
+    emit logMessage("Successfully converted to JPG: " + jpgPath);
+    return jpgPath;
+}
         return QString();
     }
 
