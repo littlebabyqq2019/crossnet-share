@@ -221,10 +221,33 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         return result;
     }
 
+    emit logMessage("Loading image from: " + baseImagePath);
+    emit logMessage("File exists: " + QString(QFile::exists(baseImagePath) ? "Yes" : "No"));
+    if (QFile::exists(baseImagePath)) {
+        QFileInfo fileInfo(baseImagePath);
+        emit logMessage("File size: " + QString::number(fileInfo.size()) + " bytes");
+    }
+
     QImage baseImage(baseImagePath);
     if (baseImage.isNull()) {
-        result.error = "Failed to load generated image";
-        return result;
+        emit logMessage("Error: QImage failed to load the file");
+        emit logMessage("Checking for multi-page output...");
+
+        // LibreOffice 可能生成了多页，尝试查找第一页
+        QFileInfo info(baseImagePath);
+        QString baseName = info.completeBaseName();
+        QString firstPagePath = info.dir().absolutePath() + "/" + baseName + "_1.jpg";
+
+        if (QFile::exists(firstPagePath)) {
+            emit logMessage("Found multi-page output, using first page: " + firstPagePath);
+            baseImage.load(firstPagePath);
+            baseImagePath = firstPagePath;
+        }
+
+        if (baseImage.isNull()) {
+            result.error = "Failed to load generated image";
+            return result;
+        }
     }
 
     // 5. 为每个关键词生成带水印的图片
