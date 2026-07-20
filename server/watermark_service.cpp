@@ -180,24 +180,35 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         return result;
     }
 
-    emit progress("开始处理文档...", 1, 5);
+    emit progress("开始处理文档...", 1, 6);
     emit logMessage("Processing: " + wordFilePath);
 
-    // 1. 转换 Word 为 HTML（提取表格内容）
-    emit progress("解析文档表格...", 2, 5);
-    QString htmlPath = convertWordToHtml(wordFilePath, outputDir);
-    if (htmlPath.isEmpty()) {
-        result.error = "Failed to convert Word to HTML";
+    // 1. 转换 Word 为 PDF（使用 DocumentConverter，处理 WordML 格式）
+    emit progress("转换文档为 PDF...", 2, 6);
+    QString pdfPath = convertWordToPdf(wordFilePath, outputDir);
+    if (pdfPath.isEmpty()) {
+        result.error = "Failed to convert Word to PDF";
         return result;
     }
 
-    // 2. 提取拟办意见文本
-    QString opinionText = extractOpinionText(htmlPath);
-    if (opinionText.isEmpty()) {
-        emit logMessage("Warning: No opinion text found in row 7, column 2");
+    // 2. 转换 PDF 为 HTML（提取表格内容）
+    emit progress("解析文档表格...", 3, 6);
+    QString htmlPath = convertWordToHtml(pdfPath, outputDir);
+    if (htmlPath.isEmpty()) {
+        emit logMessage("Warning: Failed to convert PDF to HTML for table extraction");
+        emit logMessage("Continuing without keyword detection...");
     }
 
-    // 3. 匹配关键词
+    // 3. 提取拟办意见文本
+    QString opinionText;
+    if (!htmlPath.isEmpty()) {
+        opinionText = extractOpinionText(htmlPath);
+        if (opinionText.isEmpty()) {
+            emit logMessage("Warning: No opinion text found in row 7, column 2");
+        }
+    }
+
+    // 4. 匹配关键词
     QStringList matchedKeywords;
     if (config_.enableUnified) {
         // 统一水印模式：使用配置的统一文字
@@ -206,7 +217,9 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         }
     } else {
         // 关键词模式：匹配检测到的关键词
-        matchedKeywords = matchKeywords(opinionText);
+        if (!opinionText.isEmpty()) {
+            matchedKeywords = matchKeywords(opinionText);
+        }
     }
 
     if (matchedKeywords.isEmpty()) {
@@ -215,16 +228,8 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         matchedKeywords.append("");  // 空字符串表示无水印
     }
 
-    // 4. 转换 Word 为 PDF（使用 DocumentConverter，处理 WordML 格式）
-    emit progress("转换文档为 PDF...", 3, 5);
-    QString pdfPath = convertWordToPdf(wordFilePath, outputDir);
-    if (pdfPath.isEmpty()) {
-        result.error = "Failed to convert Word to PDF";
-        return result;
-    }
-
     // 5. 转换 PDF 为 JPG
-    emit progress("转换文档为图片...", 4, 5);
+    emit progress("转换文档为图片...", 4, 6);
     QString baseImagePath = convertPdfToJpg(pdfPath, outputDir);
     if (baseImagePath.isEmpty()) {
         result.error = "Failed to convert PDF to JPG";
@@ -261,7 +266,7 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
     }
 
     // 6. 为每个关键词生成带水印的图片
-    emit progress("生成水印图片...", 5, 5);
+    emit progress("生成水印图片...", 5, 6);
     QStringList generatedImages;
     QString baseName = QFileInfo(originalFileName).completeBaseName();
 
@@ -304,7 +309,9 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
     result.zipFilePath = createZipFile(generatedImages, outputDir, baseName + "_水印图片");
 
     // 8. 清理临时文件
-    QFile::remove(htmlPath);
+    if (!htmlPath.isEmpty()) {
+        QFile::remove(htmlPath);
+    }
     QFile::remove(pdfPath);
     QFile::remove(baseImagePath);
     for (const QString& imagePath : generatedImages) {
