@@ -879,18 +879,14 @@ QImage WatermarkService::addWatermark(const QImage& source, const QString& text)
 }
 
 QString WatermarkService::createZipFile(const QStringList& imagePaths, const QString& outputDir, const QString& baseName) {
-    // 简化版：直接返回第一个文件（如果只有一个）
-    // 完整版需要使用 QuaZip 或调用系统压缩命令
-
-    if (imagePaths.size() == 1) {
-        return imagePaths.first();
+    if (imagePaths.isEmpty()) {
+        emit logMessage("Error: No images to zip");
+        return QString();
     }
 
-    // TODO: 实现 ZIP 打包
-    // 临时方案：返回第一个文件
     QString zipPath = outputDir + "/" + baseName + ".zip";
 
-    // 使用系统 tar 命令打包（Windows 10+ 支持）
+    // 获取文件名列表
     QStringList fileNames;
     for (const QString& path : imagePaths) {
         fileNames.append(QFileInfo(path).fileName());
@@ -906,6 +902,8 @@ QString WatermarkService::createZipFile(const QStringList& imagePaths, const QSt
     args << "-Command"
          << QString("Compress-Archive -Path '%1' -DestinationPath '%2' -Force")
             .arg(filesArg, QFileInfo(zipPath).fileName());
+
+    emit logMessage("Creating ZIP with PowerShell: " + args.join(" "));
     process.start("powershell", args);
     #else
     // Linux/Mac: 使用 zip
@@ -918,15 +916,34 @@ QString WatermarkService::createZipFile(const QStringList& imagePaths, const QSt
     if (!process.waitForFinished(10000)) {
         emit logMessage("Warning: ZIP creation timeout");
         process.kill();
-        return imagePaths.first();
+        // Fallback: if only one file, return it directly
+        if (imagePaths.size() == 1) {
+            return imagePaths.first();
+        }
+        return QString();
+    }
+
+    if (process.exitCode() != 0) {
+        emit logMessage("Warning: ZIP creation failed with exit code " + QString::number(process.exitCode()));
+        QString errorOutput = QString::fromLocal8Bit(process.readAllStandardError());
+        if (!errorOutput.isEmpty()) {
+            emit logMessage("ZIP error output: " + errorOutput);
+        }
     }
 
     if (QFile::exists(zipPath)) {
+        emit logMessage("ZIP file created successfully: " + zipPath);
         return zipPath;
     }
 
-    emit logMessage("Warning: ZIP creation failed, returning first image");
-    return imagePaths.first();
+    emit logMessage("Warning: ZIP file does not exist after creation attempt");
+    // Fallback: if only one file, return it directly
+    if (imagePaths.size() == 1) {
+        emit logMessage("Returning single image file instead: " + imagePaths.first());
+        return imagePaths.first();
+    }
+
+    return QString();
 }
 
 }

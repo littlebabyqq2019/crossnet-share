@@ -933,11 +933,14 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
         return;
     }
 
-    // 读取生成的 ZIP 文件
-    qDebug() << "[Watermark] Attempting to open ZIP file:" << watermarkResult.zipFilePath;
-    QFile zipFile(watermarkResult.zipFilePath);
-    if (!zipFile.open(QIODevice::ReadOnly)) {
-        qDebug() << "[Watermark] ERROR: Failed to open ZIP file!";
+    // 读取生成的 ZIP 文件（或单个图片文件）
+    qDebug() << "[Watermark] Attempting to open file:" << watermarkResult.zipFilePath;
+    QFileInfo fileInfo(watermarkResult.zipFilePath);
+    QString extension = fileInfo.suffix().toLower();
+
+    QFile file(watermarkResult.zipFilePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qDebug() << "[Watermark] ERROR: Failed to open file!";
         response.statusCode = 500;
         response.statusText = "Internal Server Error";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
@@ -947,20 +950,26 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
         return;
     }
 
-    qDebug() << "[Watermark] Successfully opened ZIP file";
-    QByteArray zipData = zipFile.readAll();
-    zipFile.close();
-    qDebug() << "[Watermark] Read" << zipData.size() << "bytes from ZIP file";
+    qDebug() << "[Watermark] Successfully opened file";
+    QByteArray fileData = file.readAll();
+    file.close();
+    qDebug() << "[Watermark] Read" << fileData.size() << "bytes from file";
 
     // 清理临时目录
     QDir(tempDir).removeRecursively();
 
-    // 返回 ZIP 文件
+    // 返回文件（ZIP 或单个图片）
     response.statusCode = 200;
     response.statusText = "OK";
-    response.headers["Content-Type"] = "application/zip";
-    response.headers["Content-Disposition"] = "attachment; filename=\"" + QFileInfo(watermarkResult.zipFilePath).fileName().toUtf8() + "\"";
-    response.body = zipData;
+    if (extension == "zip") {
+        response.headers["Content-Type"] = "application/zip";
+        response.headers["Content-Disposition"] = "attachment; filename=\"" + fileInfo.fileName().toUtf8() + "\"";
+    } else {
+        // 单个图片文件
+        response.headers["Content-Type"] = "image/jpeg";
+        response.headers["Content-Disposition"] = "attachment; filename=\"" + fileInfo.fileName().toUtf8() + "\"";
+    }
+    response.body = fileData;
 
     sendResponse(socket, response);
 
