@@ -531,32 +531,6 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
     return jpgPath;
 }
 
-QString WatermarkService::convertDocumentToJpg(const QString& wordFilePath, const QString& outputDir) {
-#ifdef Q_OS_WIN
-    // Windows: 优先使用 Word COM API 直接导出为图片（保证字体正确且速度快）
-
-    // 尝试使用 DocumentConverter 的 Word COM
-    QString pdfPath = convertWordToPdf(wordFilePath, outputDir);
-    if (pdfPath.isEmpty()) {
-        LOG_MESSAGE("Word COM not available, falling back to LibreOffice");
-        return convertWordToJpgLibreOffice(wordFilePath, outputDir);
-    }
-
-    // 使用 Ghostscript 转 JPG（保证字体正确）
-    QString jpgPath = convertPdfToJpg(pdfPath, outputDir);
-
-    // 删除临时PDF
-    if (!pdfPath.isEmpty() && QFile::exists(pdfPath)) {
-        QFile::remove(pdfPath);
-    }
-
-    return jpgPath;
-#else
-    // Linux/Mac: 使用 LibreOffice
-    return convertWordToJpgLibreOffice(wordFilePath, outputDir);
-#endif
-}
-
 QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const QString& outputDir) {
     // 尝试多个可能的 LibreOffice 可执行文件名
     QStringList possibleCommands = {"soffice", "soffice.exe", "libreoffice", "libreoffice.exe"};
