@@ -437,7 +437,7 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
 
     QStringList args;
     args << "--headless"
-         << "--convert-to" << "jpg"
+         << "--convert-to" << "jpg:writer_jpg_Export:Quality=95"
          << "--outdir" << outputDir
          << pdfFilePath;
 
