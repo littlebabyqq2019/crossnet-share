@@ -24,6 +24,9 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow();
 
+    // Public method for redirecting qDebug output
+    void appendDebugLog(const QString& message);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
 

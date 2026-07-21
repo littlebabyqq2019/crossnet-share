@@ -401,6 +401,12 @@ void MainWindow::appendLog(const QString& message) {
     logTextEdit_->moveCursor(QTextCursor::End);
 }
 
+void MainWindow::appendDebugLog(const QString& message) {
+    // Directly append debug messages without timestamp (qDebug already has context)
+    logTextEdit_->append(message);
+    logTextEdit_->moveCursor(QTextCursor::End);
+}
+
 void MainWindow::onCleanupCache() {
     DocumentConverter::cleanupCache();
     appendLog("已清理旧的预览缓存文件");
