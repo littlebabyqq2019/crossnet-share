@@ -797,7 +797,8 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
         }
 
         QStringList args;
-        args << "-Command"
+        args << "-WindowStyle" << "Hidden"
+             << "-Command"
              << QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
                 .arg(QDir::toNativeSeparators(zipPath), QDir::toNativeSeparators(tempDir.path()));
         LOG_MESSAGE("Extracting docx with PowerShell: " + args.join(" "));
@@ -972,7 +973,8 @@ QString WatermarkService::createZipFile(const QStringList& imagePaths, const QSt
     // Windows: 使用 PowerShell Compress-Archive
     QString filesArg = fileNames.join("','");
     QStringList args;
-    args << "-Command"
+    args << "-WindowStyle" << "Hidden"
+         << "-Command"
          << QString("Compress-Archive -Path '%1' -DestinationPath '%2' -Force")
             .arg(filesArg, QFileInfo(zipPath).fileName());
 
