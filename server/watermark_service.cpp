@@ -16,6 +16,10 @@
 #include <QImageReader>
 #include <cmath>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 // 调试宏：同时输出到控制台和日志信号
 #define LOG_MESSAGE(msg) do { \
     QString logMsg = (msg); \
