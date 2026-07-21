@@ -5,6 +5,7 @@
 #include <QMessageBox>
 #include <QLabel>
 #include <QCheckBox>
+#include <QCoreApplication>
 
 namespace CrossNetShare {
 
@@ -92,6 +93,10 @@ void UserManagementDialog::onAddUser() {
         UserPermission permission = dialog.getPermission();
 
         if (UserManager::instance()->addUser(username, password, isAdmin, permission)) {
+            // 保存到文件
+            QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
+            UserManager::instance()->saveToFile(configFile);
+
             QMessageBox::information(this, "成功", "用户添加成功");
             loadUsers();
         } else {
@@ -125,6 +130,10 @@ void UserManagementDialog::onEditUser() {
             UserManager::instance()->updatePassword(username, password);
         }
 
+        // 保存到文件
+        QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
+        UserManager::instance()->saveToFile(configFile);
+
         QMessageBox::information(this, "成功", "用户信息更新成功");
         loadUsers();
     }
@@ -151,6 +160,10 @@ void UserManagementDialog::onDeleteUser() {
 
     if (reply == QMessageBox::Yes) {
         if (UserManager::instance()->removeUser(username)) {
+            // 保存到文件
+            QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
+            UserManager::instance()->saveToFile(configFile);
+
             QMessageBox::information(this, "成功", "用户删除成功");
             loadUsers();
         } else {
