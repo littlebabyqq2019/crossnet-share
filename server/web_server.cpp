@@ -214,6 +214,9 @@ bool WebServer::parseHttpRequest(const QByteArray& data, HttpRequest& request) {
 }
 
 void WebServer::handleRequest(QTcpSocket* socket, const HttpRequest& request) {
+    // Log all incoming requests
+    qDebug() << "[HTTP]" << request.method << request.path;
+
     if (request.path == "/" || request.path == "/login") {
         serveLoginPage(socket);
         return;
