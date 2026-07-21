@@ -25,6 +25,18 @@
 
 namespace CrossNetShare {
 
+// 辅助函数：配置 QProcess 在 Windows 上隐藏窗口
+static void configureProcessNoWindow(QProcess* process) {
+#ifdef Q_OS_WIN
+    // Windows: 隐藏控制台窗口
+    process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
+        args->flags |= CREATE_NO_WINDOW;
+    });
+#else
+    Q_UNUSED(process);
+#endif
+}
+
 WatermarkService::WatermarkService(QObject* parent)
     : QObject(parent)
 {
@@ -450,6 +462,7 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
     }
 
     QProcess process;
+    configureProcessNoWindow(&process);
     process.setWorkingDirectory(outputDir);
     process.start(sofficePath, args);
 
@@ -543,6 +556,7 @@ QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const Q
     }
 
     QProcess process;
+    configureProcessNoWindow(&process);
     process.setWorkingDirectory(outputDir);
     process.start(sofficePath, args);
 
@@ -627,6 +641,7 @@ QString WatermarkService::convertWordToJpg(const QString& wordFilePath, const QS
     }
 
     QProcess process;
+    configureProcessNoWindow(&process);
     process.setWorkingDirectory(outputDir);
     process.start(sofficePath, args);
 
@@ -767,6 +782,7 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
 
         // 解压 docx 文件
         QProcess unzip;
+        configureProcessNoWindow(&unzip);
         #ifdef Q_OS_WIN
         // Windows: PowerShell Expand-Archive 只支持 .zip 扩展名
         // 创建临时 .zip 副本
@@ -945,6 +961,7 @@ QString WatermarkService::createZipFile(const QStringList& imagePaths, const QSt
     }
 
     QProcess process;
+    configureProcessNoWindow(&process);
     process.setWorkingDirectory(outputDir);
 
     #ifdef Q_OS_WIN
