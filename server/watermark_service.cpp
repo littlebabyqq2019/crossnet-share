@@ -12,7 +12,15 @@
 #include <QDateTime>
 #include <QTemporaryFile>
 #include <QTemporaryDir>
+#include <QDebug>
 #include <cmath>
+
+// 调试宏：同时输出到控制台和日志信号
+#define LOG_MESSAGE(msg) do { \
+    QString logMsg = (msg); \
+    qDebug() << "[Watermark]" << logMsg; \
+    emit logMessage(logMsg); \
+} while(0)
 
 namespace CrossNetShare {
 
@@ -182,7 +190,7 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
     }
 
     emit progress("开始处理文档...", 1, 5);
-    emit logMessage("Processing: " + wordFilePath);
+    LOG_MESSAGE("Processing: " + wordFilePath);
 
     // 1. 转换 Word 为 PDF（使用 DocumentConverter，处理 WordML 格式）
     emit progress("转换文档为 PDF...", 2, 5);
@@ -196,7 +204,7 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
     emit progress("提取建议内容...", 3, 5);
     QString suggestionText = extractSuggestionFromWord(wordFilePath);
     if (suggestionText.isEmpty()) {
-        emit logMessage("Warning: No suggestion text found (no '建议：' paragraph)");
+        LOG_MESSAGE("Warning: No suggestion text found (no '建议：' paragraph)");
     }
 
     // 3. 匹配关键词
@@ -215,7 +223,7 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
 
     if (matchedKeywords.isEmpty()) {
         // 没有匹配到关键词，生成无水印原图
-        emit logMessage("No keywords matched, generating original image");
+        LOG_MESSAGE("No keywords matched, generating original image");
         matchedKeywords.append("");  // 空字符串表示无水印
     }
 
@@ -227,17 +235,17 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         return result;
     }
 
-    emit logMessage("Loading image from: " + baseImagePath);
-    emit logMessage("File exists: " + QString(QFile::exists(baseImagePath) ? "Yes" : "No"));
+    LOG_MESSAGE("Loading image from: " + baseImagePath);
+    LOG_MESSAGE("File exists: " + QString(QFile::exists(baseImagePath) ? "Yes" : "No"));
     if (QFile::exists(baseImagePath)) {
         QFileInfo fileInfo(baseImagePath);
-        emit logMessage("File size: " + QString::number(fileInfo.size()) + " bytes");
+        LOG_MESSAGE("File size: " + QString::number(fileInfo.size()) + " bytes");
     }
 
     QImage baseImage(baseImagePath);
     if (baseImage.isNull()) {
-        emit logMessage("Error: QImage failed to load the file");
-        emit logMessage("Checking for multi-page output...");
+        LOG_MESSAGE("Error: QImage failed to load the file");
+        LOG_MESSAGE("Checking for multi-page output...");
 
         // LibreOffice 可能生成了多页，尝试查找第一页
         QFileInfo info(baseImagePath);
@@ -245,12 +253,13 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         QString firstPagePath = info.dir().absolutePath() + "/" + baseName + "_1.jpg";
 
         if (QFile::exists(firstPagePath)) {
-            emit logMessage("Found multi-page output, using first page: " + firstPagePath);
+            LOG_MESSAGE("Found multi-page output, using first page: " + firstPagePath);
             baseImage.load(firstPagePath);
             baseImagePath = firstPagePath;
         }
 
         if (baseImage.isNull()) {
+            LOG_MESSAGE("ERROR: Failed to load generated image - QImage.isNull() after all attempts");
             result.error = "Failed to load generated image";
             return result;
         }
@@ -280,14 +289,14 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
 
         QString outputPath = outputDir + "/" + outputFileName;
         if (!watermarkedImage.save(outputPath, "JPG", 95)) {
-            emit logMessage("Warning: Failed to save " + outputFileName);
+            LOG_MESSAGE("Warning: Failed to save " + outputFileName);
             continue;
         }
 
         generatedImages.append(outputPath);
         result.generatedFiles.append(outputFileName);
 
-        emit logMessage("Generated: " + outputFileName);
+        LOG_MESSAGE("Generated: " + outputFileName);
     }
 
     if (generatedImages.isEmpty()) {
@@ -312,18 +321,18 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
 }
 
 QString WatermarkService::convertWordToPdf(const QString& wordFilePath, const QString& outputDir) {
-    emit logMessage("Converting Word to PDF using DocumentConverter...");
+    LOG_MESSAGE("Converting Word to PDF using DocumentConverter...");
 
     // 使用 DocumentConverter 转换（会自动使用缓存）
     DocumentConverter::PreviewResult pdfResult = DocumentConverter::previewFile(wordFilePath);
 
     if (!pdfResult.success) {
-        emit logMessage("Error: Failed to convert Word to PDF: " + pdfResult.error);
+        LOG_MESSAGE("Error: Failed to convert Word to PDF: " + pdfResult.error);
         return QString();
     }
 
     if (pdfResult.mimeType != "application/pdf") {
-        emit logMessage("Error: Expected PDF output but got: " + pdfResult.mimeType);
+        LOG_MESSAGE("Error: Expected PDF output but got: " + pdfResult.mimeType);
         return QString();
     }
 
@@ -331,14 +340,14 @@ QString WatermarkService::convertWordToPdf(const QString& wordFilePath, const QS
     QString pdfPath = outputDir + "/" + QFileInfo(wordFilePath).completeBaseName() + ".pdf";
     QFile pdfFile(pdfPath);
     if (!pdfFile.open(QIODevice::WriteOnly)) {
-        emit logMessage("Error: Failed to write PDF file: " + pdfPath);
+        LOG_MESSAGE("Error: Failed to write PDF file: " + pdfPath);
         return QString();
     }
 
     pdfFile.write(pdfResult.data);
     pdfFile.close();
 
-    emit logMessage("Successfully converted to PDF: " + pdfPath);
+    LOG_MESSAGE("Successfully converted to PDF: " + pdfPath);
     return pdfPath;
 }
 
@@ -359,7 +368,7 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
     }
 
     if (sofficePath.isEmpty()) {
-        emit logMessage("Error: LibreOffice not found for PDF to JPG conversion");
+        LOG_MESSAGE("Error: LibreOffice not found for PDF to JPG conversion");
         return QString();
     }
 
@@ -369,14 +378,14 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
          << "--outdir" << outputDir
          << pdfFilePath;
 
-    emit logMessage("Converting PDF to JPG using: " + sofficePath);
-    emit logMessage("Input PDF: " + pdfFilePath);
-    emit logMessage("Output dir: " + outputDir);
-    emit logMessage("Command: " + sofficePath + " " + args.join(" "));
+    LOG_MESSAGE("Converting PDF to JPG using: " + sofficePath);
+    LOG_MESSAGE("Input PDF: " + pdfFilePath);
+    LOG_MESSAGE("Output dir: " + outputDir);
+    LOG_MESSAGE("Command: " + sofficePath + " " + args.join(" "));
 
     // 检查输入文件是否存在
     if (!QFile::exists(pdfFilePath)) {
-        emit logMessage("Error: Input PDF file does not exist: " + pdfFilePath);
+        LOG_MESSAGE("Error: Input PDF file does not exist: " + pdfFilePath);
         return QString();
     }
 
@@ -384,7 +393,7 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
     QDir dir(outputDir);
     if (!dir.exists()) {
         if (!dir.mkpath(".")) {
-            emit logMessage("Error: Failed to create output directory");
+            LOG_MESSAGE("Error: Failed to create output directory");
             return QString();
         }
     }
@@ -394,12 +403,12 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
     process.start(sofficePath, args);
 
     if (!process.waitForStarted(5000)) {
-        emit logMessage("Error: Failed to start LibreOffice for PDF to JPG conversion");
+        LOG_MESSAGE("Error: Failed to start LibreOffice for PDF to JPG conversion");
         return QString();
     }
 
     if (!process.waitForFinished(30000)) {
-        emit logMessage("Error: LibreOffice PDF to JPG conversion timeout");
+        LOG_MESSAGE("Error: LibreOffice PDF to JPG conversion timeout");
         process.kill();
         return QString();
     }
@@ -407,9 +416,9 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
     if (process.exitCode() != 0) {
         QString stderr_output = QString::fromLocal8Bit(process.readAllStandardError());
         QString stdout_output = QString::fromLocal8Bit(process.readAllStandardOutput());
-        emit logMessage("Error: LibreOffice PDF to JPG conversion failed (exit code: " + QString::number(process.exitCode()) + ")");
-        if (!stderr_output.isEmpty()) emit logMessage("stderr: " + stderr_output);
-        if (!stdout_output.isEmpty()) emit logMessage("stdout: " + stdout_output);
+        LOG_MESSAGE("Error: LibreOffice PDF to JPG conversion failed (exit code: " + QString::number(process.exitCode()) + ")");
+        if (!stderr_output.isEmpty()) LOG_MESSAGE("stderr: " + stderr_output);
+        if (!stdout_output.isEmpty()) LOG_MESSAGE("stdout: " + stdout_output);
         return QString();
     }
 
@@ -422,14 +431,14 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
         QString firstPagePath = outputDir + "/" + baseName + "_1.jpg";
         if (QFile::exists(firstPagePath)) {
             jpgPath = firstPagePath;
-            emit logMessage("Multi-page PDF detected, using first page");
+            LOG_MESSAGE("Multi-page PDF detected, using first page");
         } else {
-            emit logMessage("Error: JPG file not generated. Expected: " + jpgPath);
+            LOG_MESSAGE("Error: JPG file not generated. Expected: " + jpgPath);
             return QString();
         }
     }
 
-    emit logMessage("Successfully converted PDF to JPG: " + jpgPath);
+    LOG_MESSAGE("Successfully converted PDF to JPG: " + jpgPath);
     return jpgPath;
 }
 
@@ -654,11 +663,11 @@ QString WatermarkService::extractOpinionText(const QString& htmlFilePath) {
 }
 
 QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath) {
-    emit logMessage("Extracting suggestion from Word document: " + wordFilePath);
+    LOG_MESSAGE("Extracting suggestion from Word document: " + wordFilePath);
 
     QFile file(wordFilePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        emit logMessage("Error: Failed to open Word file: " + wordFilePath);
+        LOG_MESSAGE("Error: Failed to open Word file: " + wordFilePath);
         return QString();
     }
 
@@ -670,14 +679,14 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
 
     // WordML 格式（.doc 实际上是 XML）
     if (header.contains("<?xml") || header.contains("<w:wordDocument")) {
-        emit logMessage("Detected WordML format");
+        LOG_MESSAGE("Detected WordML format");
         content = QString::fromUtf8(file.readAll());
         file.close();
 
         // 直接搜索"建议："
         int suggestionIndex = content.indexOf("建议：");
         if (suggestionIndex == -1) {
-            emit logMessage("Warning: No '建议：' found in WordML document");
+            LOG_MESSAGE("Warning: No '建议：' found in WordML document");
             return QString();
         }
 
@@ -689,33 +698,33 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
         }
 
         QString suggestion = content.mid(startPos, endPos - startPos).trimmed();
-        emit logMessage("Extracted from WordML: " + suggestion);
+        LOG_MESSAGE("Extracted from WordML: " + suggestion);
         return suggestion;
     }
 
     // docx 格式（ZIP 压缩包）
     if (header.startsWith("PK")) {
-        emit logMessage("Detected docx format");
+        LOG_MESSAGE("Detected docx format");
         file.close();
 
         // 使用 QProcess 解压并提取
         QTemporaryDir tempDir;
         if (!tempDir.isValid()) {
-            emit logMessage("Error: Failed to create temp directory");
+            LOG_MESSAGE("Error: Failed to create temp directory");
             return QString();
         }
 
         QProcess unzip;
         unzip.start("unzip", QStringList() << "-q" << "-o" << wordFilePath << "word/document.xml" << "-d" << tempDir.path());
         if (!unzip.waitForStarted(5000) || !unzip.waitForFinished(10000)) {
-            emit logMessage("Error: Failed to unzip docx file");
+            LOG_MESSAGE("Error: Failed to unzip docx file");
             return QString();
         }
 
         QString xmlPath = tempDir.path() + "/word/document.xml";
         QFile xmlFile(xmlPath);
         if (!xmlFile.open(QIODevice::ReadOnly)) {
-            emit logMessage("Error: Failed to open document.xml from docx");
+            LOG_MESSAGE("Error: Failed to open document.xml from docx");
             return QString();
         }
 
@@ -725,7 +734,7 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
         // 搜索"建议："
         int suggestionIndex = content.indexOf("建议：");
         if (suggestionIndex == -1) {
-            emit logMessage("Warning: No '建议：' found in docx document");
+            LOG_MESSAGE("Warning: No '建议：' found in docx document");
             return QString();
         }
 
@@ -737,12 +746,12 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
         }
 
         QString suggestion = content.mid(startPos, endPos - startPos).trimmed();
-        emit logMessage("Extracted from docx: " + suggestion);
+        LOG_MESSAGE("Extracted from docx: " + suggestion);
         return suggestion;
     }
 
     file.close();
-    emit logMessage("Error: Unknown Word document format");
+    LOG_MESSAGE("Error: Unknown Word document format");
     return QString();
 }
 
@@ -757,7 +766,7 @@ QStringList WatermarkService::matchKeywords(const QString& text) {
         // 精确匹配整个短语
         if (text.contains(rule.detectText)) {
             matched.append(rule.watermarkText);
-            emit logMessage("Matched keyword: " + rule.detectText + " -> " + rule.watermarkText);
+            LOG_MESSAGE("Matched keyword: " + rule.detectText + " -> " + rule.watermarkText);
         }
     }
 
