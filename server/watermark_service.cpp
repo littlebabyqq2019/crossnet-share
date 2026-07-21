@@ -265,6 +265,14 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         }
     }
 
+    // Log available image formats
+    QList<QByteArray> supportedFormats = QImageReader::supportedImageFormats();
+    QString formatsStr;
+    for (const QByteArray& format : supportedFormats) {
+        formatsStr += QString::fromLatin1(format) + " ";
+    }
+    LOG_MESSAGE("Qt supported image formats: " + formatsStr);
+
     QImage baseImage(baseImagePath);
     if (baseImage.isNull()) {
         LOG_MESSAGE("Error: QImage failed to load the file");
