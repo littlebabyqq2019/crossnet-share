@@ -507,10 +507,7 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
         return QString();
     }
 
-    // 计算输出文件名
-    QString baseName = QFileInfo(pdfFilePath).completeBaseName();
-    QString jpgPath = outputDir + "/" + baseName + ".jpg";
-
+    // baseName 和 jpgPath 已在函数开头定义，不需要重复
     // LibreOffice 可能生成多页，检查第一页
     if (!QFile::exists(jpgPath)) {
         QString firstPagePath = outputDir + "/" + baseName + "_1.jpg";

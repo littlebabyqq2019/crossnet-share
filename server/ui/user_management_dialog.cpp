@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QCheckBox>
 #include <QCoreApplication>
+#include <QDebug>
 
 namespace CrossNetShare {
 

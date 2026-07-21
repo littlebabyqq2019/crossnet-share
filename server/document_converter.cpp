@@ -11,6 +11,7 @@
 #include <QUrl>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #ifdef Q_OS_WIN
 #include <QAxObject>
 #endif
