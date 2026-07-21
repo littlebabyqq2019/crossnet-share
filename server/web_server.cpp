@@ -13,6 +13,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QDebug>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTextStream>
@@ -798,6 +799,7 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
 
     // 检查水印服务是否可用
     if (!watermarkService_) {
+        qDebug() << "[Watermark] Error: Watermark service not initialized";
         response.statusCode = 500;
         response.statusText = "Internal Server Error";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
@@ -807,7 +809,9 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
     }
 
     // 检查水印功能是否启用
+    qDebug() << "[Watermark] Watermark service config enabled:" << watermarkService_->getConfig().enabled;
     if (!watermarkService_->getConfig().enabled) {
+        qDebug() << "[Watermark] Error: Watermark feature is disabled in config";
         response.statusCode = 403;
         response.statusText = "Forbidden";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
@@ -815,6 +819,8 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
         sendResponse(socket, response);
         return;
     }
+
+    qDebug() << "[Watermark] Starting watermark generation request";
 
     // 解析请求参数
     QJsonDocument doc = QJsonDocument::fromJson(request.body);
@@ -898,16 +904,19 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
     tempFile.close();
 
     // 生成水印图片
+    qDebug() << "[Watermark] Calling generateWatermarkedImages with:" << tempFilePath;
     WatermarkService::WatermarkResult watermarkResult = watermarkService_->generateWatermarkedImages(
         tempFilePath,
         tempDir,
         originalFileName
     );
+    qDebug() << "[Watermark] generateWatermarkedImages returned, success:" << watermarkResult.success;
 
     // 清理原始临时文件
     QFile::remove(tempFilePath);
 
     if (!watermarkResult.success) {
+        qDebug() << "[Watermark] Error:" << watermarkResult.error;
         response.statusCode = 500;
         response.statusText = "Internal Server Error";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
