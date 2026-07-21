@@ -269,6 +269,19 @@ void Client::onReadyRead() {
 
 void Client::onError(QAbstractSocket::SocketError socketError) {
     emit error("Socket error: " + socket_->errorString());
+
+    // 如果是连接错误且启用了自动重连，启动重连定时器
+    if (!connected_ && autoReconnect_ && !serverHost_.isEmpty()) {
+        if (socketError == QAbstractSocket::ConnectionRefusedError ||
+            socketError == QAbstractSocket::NetworkError ||
+            socketError == QAbstractSocket::HostNotFoundError ||
+            socketError == QAbstractSocket::SocketTimeoutError) {
+
+            int delay = qMin(30000, 3000 * (reconnectAttempts_ + 1));
+            emit logMessage("Will attempt to reconnect in " + QString::number(delay / 1000) + " seconds...");
+            reconnectTimer_->start(delay);
+        }
+    }
 }
 
 void Client::handleMessage(MessageType type, const nlohmann::json& payload) {

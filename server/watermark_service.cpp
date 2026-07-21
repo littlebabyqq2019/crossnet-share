@@ -244,11 +244,11 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         matchedKeywords.append("");  // 空字符串表示无水印
     }
 
-    // 4. 转换 PDF 为 JPG
+    // 4. 转换文档为图片（优先使用Word COM直接渲染，保证字体正确）
     emit progress("转换文档为图片...", 4, 5);
-    QString baseImagePath = convertPdfToJpg(pdfPath, outputDir);
+    QString baseImagePath = convertDocumentToJpg(wordFilePath, outputDir);
     if (baseImagePath.isEmpty()) {
-        result.error = "Failed to convert PDF to JPG";
+        result.error = "Failed to convert document to JPG";
         return result;
     }
 
@@ -433,40 +433,6 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
         }
     }
 
-    // 尝试多个可能的 LibreOffice 可执行文件名
-    QStringList possibleCommands = {"soffice", "soffice.exe", "libreoffice", "libreoffice.exe"};
-    QString sofficePath;
-
-    // 检查哪个命令可用
-    for (const QString& cmd : possibleCommands) {
-        QProcess testProcess;
-        testProcess.start(cmd, QStringList() << "--version");
-        if (testProcess.waitForStarted(1000)) {
-            testProcess.waitForFinished(3000);
-            sofficePath = cmd;
-            break;
-        }
-    }
-
-    if (sofficePath.isEmpty()) {
-        LOG_MESSAGE("Error: LibreOffice not found for PDF to JPG conversion");
-        return QString();
-    }
-
-    QStringList args;
-    args << "--headless"
-         << "--convert-to" << "jpg"
-         << "--outdir" << outputDir
-         << pdfFilePath;
-
-    // 注意: LibreOffice PDF->JPG 转换质量参数不生效
-    // 需要使用环境变量或其他方法提高分辨率
-
-    LOG_MESSAGE("Converting PDF to JPG using: " + sofficePath);
-    LOG_MESSAGE("Input PDF: " + pdfFilePath);
-    LOG_MESSAGE("Output dir: " + outputDir);
-    LOG_MESSAGE("Command: " + sofficePath + " " + args.join(" "));
-
     // 检查输入文件是否存在
     if (!QFile::exists(pdfFilePath)) {
         LOG_MESSAGE("Error: Input PDF file does not exist: " + pdfFilePath);
@@ -482,32 +448,73 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
         }
     }
 
-    QProcess process;
-    configureProcessNoWindow(&process);
-    process.setWorkingDirectory(outputDir);
-    process.start(sofficePath, args);
+    // 使用 Ghostscript 转换（高质量、快速、字体正确）
+    QStringList gsPaths = {
+        "gswin64c.exe", "gswin32c.exe", "gs.exe",
+        "C:/Program Files/gs/gs10.03.1/bin/gswin64c.exe",
+        "C:/Program Files/gs/gs10.03.0/bin/gswin64c.exe",
+        "C:/Program Files/gs/gs10.02.1/bin/gswin64c.exe",
+        "C:/Program Files/gs/gs10.02.0/bin/gswin64c.exe",
+        "C:/Program Files/gs/gs10.01.2/bin/gswin64c.exe",
+        "C:/Program Files (x86)/gs/gs10.03.1/bin/gswin32c.exe",
+        "C:/Program Files (x86)/gs/gs10.03.0/bin/gswin32c.exe"
+    };
 
-    if (!process.waitForStarted(5000)) {
-        LOG_MESSAGE("Error: Failed to start LibreOffice for PDF to JPG conversion");
+    QString foundGs;
+    for (const QString& gsPath : gsPaths) {
+        QProcess testProcess;
+        configureProcessNoWindow(&testProcess);
+        testProcess.start(gsPath, QStringList() << "--version");
+        if (testProcess.waitForStarted(1000)) {
+            testProcess.waitForFinished(3000);
+            foundGs = gsPath;
+            break;
+        }
+    }
+
+    if (foundGs.isEmpty()) {
+        LOG_MESSAGE("Error: Ghostscript not found. Please install Ghostscript from https://www.ghostscript.com/");
+        emit logMessage("错误：未找到Ghostscript，请从 https://www.ghostscript.com/ 下载安装");
         return QString();
     }
 
-    if (!process.waitForFinished(30000)) {
-        LOG_MESSAGE("Error: LibreOffice PDF to JPG conversion timeout");
-        process.kill();
+    LOG_MESSAGE("Using Ghostscript: " + foundGs);
+
+    QProcess gsProcess;
+    configureProcessNoWindow(&gsProcess);
+
+    QStringList args;
+    args << "-dNOPAUSE" << "-dBATCH" << "-dSAFER"
+         << "-sDEVICE=jpeg"
+         << "-r300"  // 300 DPI 高质量
+         << "-dJPEGQ=95"  // JPEG 质量 95%
+         << QString("-sOutputFile=%1").arg(QDir::toNativeSeparators(jpgPath))
+         << QDir::toNativeSeparators(pdfFilePath);
+
+    LOG_MESSAGE("Ghostscript command: " + foundGs + " " + args.join(" "));
+
+    gsProcess.start(foundGs, args);
+
+    if (!gsProcess.waitForStarted(5000)) {
+        LOG_MESSAGE("Error: Ghostscript failed to start");
         return QString();
     }
 
-    if (process.exitCode() != 0) {
-        QString stderr_output = QString::fromLocal8Bit(process.readAllStandardError());
-        QString stdout_output = QString::fromLocal8Bit(process.readAllStandardOutput());
-        LOG_MESSAGE("Error: LibreOffice PDF to JPG conversion failed (exit code: " + QString::number(process.exitCode()) + ")");
+    if (!gsProcess.waitForFinished(15000)) {
+        LOG_MESSAGE("Error: Ghostscript conversion timeout");
+        gsProcess.kill();
+        return QString();
+    }
+
+    if (gsProcess.exitCode() != 0) {
+        QString stderr_output = QString::fromLocal8Bit(gsProcess.readAllStandardError());
+        QString stdout_output = QString::fromLocal8Bit(gsProcess.readAllStandardOutput());
+        LOG_MESSAGE("Error: Ghostscript conversion failed (exit code: " + QString::number(gsProcess.exitCode()) + ")");
         if (!stderr_output.isEmpty()) LOG_MESSAGE("stderr: " + stderr_output);
         if (!stdout_output.isEmpty()) LOG_MESSAGE("stdout: " + stdout_output);
         return QString();
     }
 
-    // baseName 和 jpgPath 已在函数开头定义，不需要重复
     // LibreOffice 可能生成多页，检查第一页
     if (!QFile::exists(jpgPath)) {
         QString firstPagePath = outputDir + "/" + baseName + "_1.jpg";
@@ -515,13 +522,39 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
             jpgPath = firstPagePath;
             LOG_MESSAGE("Multi-page PDF detected, using first page");
         } else {
-            LOG_MESSAGE("Error: JPG file not generated. Expected: " + jpgPath);
+            LOG_MESSAGE("Error: JPG file not generated: " + jpgPath);
             return QString();
         }
     }
 
-    LOG_MESSAGE("Successfully converted PDF to JPG: " + jpgPath);
+    LOG_MESSAGE("Successfully converted to JPG: " + jpgPath);
     return jpgPath;
+}
+
+QString WatermarkService::convertDocumentToJpg(const QString& wordFilePath, const QString& outputDir) {
+#ifdef Q_OS_WIN
+    // Windows: 优先使用 Word COM API 直接导出为图片（保证字体正确且速度快）
+
+    // 尝试使用 DocumentConverter 的 Word COM
+    QString pdfPath = convertWordToPdf(wordFilePath, outputDir);
+    if (pdfPath.isEmpty()) {
+        LOG_MESSAGE("Word COM not available, falling back to LibreOffice");
+        return convertWordToJpgLibreOffice(wordFilePath, outputDir);
+    }
+
+    // 使用 Ghostscript 转 JPG（保证字体正确）
+    QString jpgPath = convertPdfToJpg(pdfPath, outputDir);
+
+    // 删除临时PDF
+    if (!pdfPath.isEmpty() && QFile::exists(pdfPath)) {
+        QFile::remove(pdfPath);
+    }
+
+    return jpgPath;
+#else
+    // Linux/Mac: 使用 LibreOffice
+    return convertWordToJpgLibreOffice(wordFilePath, outputDir);
+#endif
 }
 
 QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const QString& outputDir) {
@@ -532,6 +565,7 @@ QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const Q
     // 检查哪个命令可用
     for (const QString& cmd : possibleCommands) {
         QProcess testProcess;
+        configureProcessNoWindow(&testProcess);
         testProcess.start(cmd, QStringList() << "--version");
         if (testProcess.waitForStarted(1000)) {
             testProcess.waitForFinished(3000);
@@ -611,7 +645,34 @@ QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const Q
     return htmlPath;
 }
 
-QString WatermarkService::convertWordToJpg(const QString& wordFilePath, const QString& outputDir) {
+QString WatermarkService::convertDocumentToJpg(const QString& wordFilePath, const QString& outputDir) {
+#ifdef Q_OS_WIN
+    // Windows: 优先使用 Word COM API 直接导出为图片（保证字体正确且速度快）
+
+    // 尝试使用 DocumentConverter 的 Word COM
+    QString pdfPath = convertWordToPdf(wordFilePath, outputDir);
+    if (pdfPath.isEmpty()) {
+        LOG_MESSAGE("Word COM not available, falling back to LibreOffice");
+        return convertWordToJpgLibreOffice(wordFilePath, outputDir);
+    }
+
+    // 使用 PDF 转 JPG（后续可改为直接从Word导出图片）
+    // 目前先通过PDF中转，确保字体正确
+    QString jpgPath = convertPdfToJpg(pdfPath, outputDir);
+
+    // 删除临时PDF
+    if (!pdfPath.isEmpty() && QFile::exists(pdfPath)) {
+        QFile::remove(pdfPath);
+    }
+
+    return jpgPath;
+#else
+    // Linux/Mac: 使用 LibreOffice
+    return convertWordToJpgLibreOffice(wordFilePath, outputDir);
+#endif
+}
+
+QString WatermarkService::convertWordToJpgLibreOffice(const QString& wordFilePath, const QString& outputDir) {
     // 尝试多个可能的 LibreOffice 可执行文件名
     QStringList possibleCommands = {"soffice", "soffice.exe", "libreoffice", "libreoffice.exe"};
     QString sofficePath;
@@ -619,6 +680,7 @@ QString WatermarkService::convertWordToJpg(const QString& wordFilePath, const QS
     // 检查哪个命令可用
     for (const QString& cmd : possibleCommands) {
         QProcess testProcess;
+        configureProcessNoWindow(&testProcess);
         testProcess.start(cmd, QStringList() << "--version");
         if (testProcess.waitForStarted(1000)) {
             testProcess.waitForFinished(3000);

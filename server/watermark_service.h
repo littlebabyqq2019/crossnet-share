@@ -86,7 +86,8 @@ private:
     QString convertWordToPdf(const QString& wordFilePath, const QString& outputDir);
     QString convertPdfToJpg(const QString& pdfFilePath, const QString& outputDir);
     QString convertWordToHtml(const QString& wordFilePath, const QString& outputDir);
-    QString convertWordToJpg(const QString& wordFilePath, const QString& outputDir);
+    QString convertDocumentToJpg(const QString& wordFilePath, const QString& outputDir);
+    QString convertWordToJpgLibreOffice(const QString& wordFilePath, const QString& outputDir);
 
     // 表格解析
     QString extractOpinionText(const QString& htmlFilePath);

@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QMutexLocker>
+#include <QDebug>
 
 namespace CrossNetShare {
 
@@ -243,6 +244,8 @@ bool UserManager::loadFromFile(const QString& filePath) {
 bool UserManager::saveToFile(const QString& filePath) {
     QMutexLocker locker(&mutex_);
 
+    qDebug() << "[UserManager] Saving" << users_.size() << "users to" << filePath;
+
     QJsonArray usersArray;
     for (const User& user : users_) {
         QJsonObject userObj;
@@ -254,6 +257,7 @@ bool UserManager::saveToFile(const QString& filePath) {
         userObj["permission"] = permissionToString(user.permission);
 
         usersArray.append(userObj);
+        qDebug() << "[UserManager]   - User:" << user.username << "isAdmin:" << user.isAdmin;
     }
 
     QJsonObject root;
@@ -263,12 +267,19 @@ bool UserManager::saveToFile(const QString& filePath) {
 
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
+        qDebug() << "[UserManager] Failed to open file for writing:" << file.errorString();
         return false;
     }
 
-    file.write(doc.toJson());
+    qint64 written = file.write(doc.toJson());
     file.close();
 
+    if (written == -1) {
+        qDebug() << "[UserManager] Failed to write to file";
+        return false;
+    }
+
+    qDebug() << "[UserManager] Successfully wrote" << written << "bytes to" << filePath;
     return true;
 }
 
