@@ -26,6 +26,9 @@ public:
     static PreviewResult previewFile(const QString& filePath);
     static bool isPreviewSupported(const QString& filePath);
 
+    // 直接将 Word 文档转换为高质量 JPG 图片（绕过 PDF）
+    static QString convertWordToJpg(const QString& filePath, const QString& outputDir);
+
 private:
     static PreviewResult previewText(const QString& filePath);
     static PreviewResult previewImage(const QString& filePath);

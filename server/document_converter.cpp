@@ -458,4 +458,56 @@ void DocumentConverter::cleanupCache() {
     }
 }
 
+QString DocumentConverter::convertWordToJpg(const QString& filePath, const QString& outputDir) {
+#ifdef Q_OS_WIN
+    QMutexLocker locker(&wordMutex);
+
+    if (!wordApp || wordApp->isNull()) {
+        qDebug() << "Microsoft Word not available for conversion";
+        return QString();
+    }
+
+    QDir().mkpath(outputDir);
+
+    QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
+    QString baseName = QFileInfo(filePath).completeBaseName();
+    QString outputPath = outputDir + "/" + baseName + ".png";
+    QString nativeOutputPath = QDir::toNativeSeparators(outputPath);
+
+    QAxObject* documents = wordApp->querySubObject("Documents");
+    if (!documents) {
+        qDebug() << "Failed to access Word Documents";
+        return QString();
+    }
+
+    QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
+        nativeInputPath, false, true, false);
+
+    if (!document) {
+        qDebug() << "Failed to open document in Word";
+        return QString();
+    }
+
+    // 导出高质量 PDF
+    QString tempPdfPath = outputDir + "/" + baseName + "_temp.pdf";
+    QString nativeTempPdfPath = QDir::toNativeSeparators(tempPdfPath);
+
+    document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
+        nativeTempPdfPath, 17);
+
+    document->dynamicCall("Close(bool)", false);
+
+    if (!QFile::exists(tempPdfPath)) {
+        qDebug() << "Failed to generate PDF";
+        return QString();
+    }
+
+    return tempPdfPath;
+#else
+    Q_UNUSED(filePath);
+    Q_UNUSED(outputDir);
+    return QString();
+#endif
+}
+
 }

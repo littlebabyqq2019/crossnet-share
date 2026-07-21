@@ -419,6 +419,20 @@ QString WatermarkService::convertWordToPdf(const QString& wordFilePath, const QS
 }
 
 QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QString& outputDir) {
+    // 计算输出文件名
+    QString baseName = QFileInfo(pdfFilePath).completeBaseName();
+    QString jpgPath = outputDir + "/" + baseName + ".jpg";
+
+    // 检查缓存：如果 JPG 已存在且比 PDF 新，直接返回
+    if (QFile::exists(jpgPath)) {
+        QFileInfo pdfInfo(pdfFilePath);
+        QFileInfo jpgInfo(jpgPath);
+        if (jpgInfo.lastModified() >= pdfInfo.lastModified()) {
+            LOG_MESSAGE("Using cached JPG: " + jpgPath);
+            return jpgPath;
+        }
+    }
+
     // 尝试多个可能的 LibreOffice 可执行文件名
     QStringList possibleCommands = {"soffice", "soffice.exe", "libreoffice", "libreoffice.exe"};
     QString sofficePath;
@@ -441,9 +455,12 @@ QString WatermarkService::convertPdfToJpg(const QString& pdfFilePath, const QStr
 
     QStringList args;
     args << "--headless"
-         << "--convert-to" << "jpg:writer_jpg_Export:Quality=95"
+         << "--convert-to" << "jpg"
          << "--outdir" << outputDir
          << pdfFilePath;
+
+    // 注意: LibreOffice PDF->JPG 转换质量参数不生效
+    // 需要使用环境变量或其他方法提高分辨率
 
     LOG_MESSAGE("Converting PDF to JPG using: " + sofficePath);
     LOG_MESSAGE("Input PDF: " + pdfFilePath);
