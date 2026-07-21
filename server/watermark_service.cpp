@@ -11,6 +11,7 @@
 #include <QStandardPaths>
 #include <QDateTime>
 #include <QTemporaryFile>
+#include <QTemporaryDir>
 #include <cmath>
 
 namespace CrossNetShare {
@@ -180,35 +181,25 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         return result;
     }
 
-    emit progress("开始处理文档...", 1, 6);
+    emit progress("开始处理文档...", 1, 5);
     emit logMessage("Processing: " + wordFilePath);
 
     // 1. 转换 Word 为 PDF（使用 DocumentConverter，处理 WordML 格式）
-    emit progress("转换文档为 PDF...", 2, 6);
+    emit progress("转换文档为 PDF...", 2, 5);
     QString pdfPath = convertWordToPdf(wordFilePath, outputDir);
     if (pdfPath.isEmpty()) {
         result.error = "Failed to convert Word to PDF";
         return result;
     }
 
-    // 2. 转换 PDF 为 HTML（提取表格内容）
-    emit progress("解析文档表格...", 3, 6);
-    QString htmlPath = convertWordToHtml(pdfPath, outputDir);
-    if (htmlPath.isEmpty()) {
-        emit logMessage("Warning: Failed to convert PDF to HTML for table extraction");
-        emit logMessage("Continuing without keyword detection...");
+    // 2. 直接从 Word 文档提取"建议："段落
+    emit progress("提取建议内容...", 3, 5);
+    QString suggestionText = extractSuggestionFromWord(wordFilePath);
+    if (suggestionText.isEmpty()) {
+        emit logMessage("Warning: No suggestion text found (no '建议：' paragraph)");
     }
 
-    // 3. 提取拟办意见文本
-    QString opinionText;
-    if (!htmlPath.isEmpty()) {
-        opinionText = extractOpinionText(htmlPath);
-        if (opinionText.isEmpty()) {
-            emit logMessage("Warning: No opinion text found in row 7, column 2");
-        }
-    }
-
-    // 4. 匹配关键词
+    // 3. 匹配关键词
     QStringList matchedKeywords;
     if (config_.enableUnified) {
         // 统一水印模式：使用配置的统一文字
@@ -217,8 +208,8 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         }
     } else {
         // 关键词模式：匹配检测到的关键词
-        if (!opinionText.isEmpty()) {
-            matchedKeywords = matchKeywords(opinionText);
+        if (!suggestionText.isEmpty()) {
+            matchedKeywords = matchKeywords(suggestionText);
         }
     }
 
@@ -228,8 +219,8 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         matchedKeywords.append("");  // 空字符串表示无水印
     }
 
-    // 5. 转换 PDF 为 JPG
-    emit progress("转换文档为图片...", 4, 6);
+    // 4. 转换 PDF 为 JPG
+    emit progress("转换文档为图片...", 4, 5);
     QString baseImagePath = convertPdfToJpg(pdfPath, outputDir);
     if (baseImagePath.isEmpty()) {
         result.error = "Failed to convert PDF to JPG";
@@ -265,8 +256,8 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         }
     }
 
-    // 6. 为每个关键词生成带水印的图片
-    emit progress("生成水印图片...", 5, 6);
+    // 5. 为每个关键词生成带水印的图片
+    emit progress("生成水印图片...", 5, 5);
     QStringList generatedImages;
     QString baseName = QFileInfo(originalFileName).completeBaseName();
 
@@ -304,14 +295,10 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         return result;
     }
 
-    // 7. 打包为 ZIP
-    emit progress("打包图片...", 6, 6);
+    // 6. 打包为 ZIP
     result.zipFilePath = createZipFile(generatedImages, outputDir, baseName + "_水印图片");
 
-    // 8. 清理临时文件
-    if (!htmlPath.isEmpty()) {
-        QFile::remove(htmlPath);
-    }
+    // 7. 清理临时文件
     QFile::remove(pdfPath);
     QFile::remove(baseImagePath);
     for (const QString& imagePath : generatedImages) {
@@ -320,7 +307,7 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
     }
 
     result.success = true;
-    emit progress("完成！", 6, 6);
+    emit progress("完成！", 5, 5);
     return result;
 }
 
@@ -663,6 +650,99 @@ QString WatermarkService::extractOpinionText(const QString& htmlFilePath) {
         emit logMessage("Warning: XML parsing error: " + xml.errorString());
     }
 
+    return QString();
+}
+
+QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath) {
+    emit logMessage("Extracting suggestion from Word document: " + wordFilePath);
+
+    QFile file(wordFilePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        emit logMessage("Error: Failed to open Word file: " + wordFilePath);
+        return QString();
+    }
+
+    // 检测文件类型
+    QByteArray header = file.read(512);
+    file.seek(0);
+
+    QString content;
+
+    // WordML 格式（.doc 实际上是 XML）
+    if (header.contains("<?xml") || header.contains("<w:wordDocument")) {
+        emit logMessage("Detected WordML format");
+        content = QString::fromUtf8(file.readAll());
+        file.close();
+
+        // 直接搜索"建议："
+        int suggestionIndex = content.indexOf("建议：");
+        if (suggestionIndex == -1) {
+            emit logMessage("Warning: No '建议：' found in WordML document");
+            return QString();
+        }
+
+        // 提取"建议："后的内容（到下一个标签或最多200字符）
+        int startPos = suggestionIndex;
+        int endPos = content.indexOf('<', startPos);
+        if (endPos == -1 || endPos - startPos > 500) {
+            endPos = startPos + 200;
+        }
+
+        QString suggestion = content.mid(startPos, endPos - startPos).trimmed();
+        emit logMessage("Extracted from WordML: " + suggestion);
+        return suggestion;
+    }
+
+    // docx 格式（ZIP 压缩包）
+    if (header.startsWith("PK")) {
+        emit logMessage("Detected docx format");
+        file.close();
+
+        // 使用 QProcess 解压并提取
+        QTemporaryDir tempDir;
+        if (!tempDir.isValid()) {
+            emit logMessage("Error: Failed to create temp directory");
+            return QString();
+        }
+
+        QProcess unzip;
+        unzip.start("unzip", QStringList() << "-q" << "-o" << wordFilePath << "word/document.xml" << "-d" << tempDir.path());
+        if (!unzip.waitForStarted(5000) || !unzip.waitForFinished(10000)) {
+            emit logMessage("Error: Failed to unzip docx file");
+            return QString();
+        }
+
+        QString xmlPath = tempDir.path() + "/word/document.xml";
+        QFile xmlFile(xmlPath);
+        if (!xmlFile.open(QIODevice::ReadOnly)) {
+            emit logMessage("Error: Failed to open document.xml from docx");
+            return QString();
+        }
+
+        content = QString::fromUtf8(xmlFile.readAll());
+        xmlFile.close();
+
+        // 搜索"建议："
+        int suggestionIndex = content.indexOf("建议：");
+        if (suggestionIndex == -1) {
+            emit logMessage("Warning: No '建议：' found in docx document");
+            return QString();
+        }
+
+        // 提取"建议："后的内容
+        int startPos = suggestionIndex;
+        int endPos = content.indexOf('<', startPos);
+        if (endPos == -1 || endPos - startPos > 500) {
+            endPos = startPos + 200;
+        }
+
+        QString suggestion = content.mid(startPos, endPos - startPos).trimmed();
+        emit logMessage("Extracted from docx: " + suggestion);
+        return suggestion;
+    }
+
+    file.close();
+    emit logMessage("Error: Unknown Word document format");
     return QString();
 }
 

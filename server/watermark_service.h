@@ -91,6 +91,9 @@ private:
     // 表格解析
     QString extractOpinionText(const QString& htmlFilePath);
 
+    // 直接从 Word 文档提取"建议："段落
+    QString extractSuggestionFromWord(const QString& wordFilePath);
+
     // 关键词匹配
     QStringList matchKeywords(const QString& text);
 
