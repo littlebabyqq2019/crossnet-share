@@ -349,7 +349,14 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
     }
 
     // 6. 打包为 ZIP
+    LOG_MESSAGE("Creating ZIP file for " + QString::number(generatedImages.size()) + " images...");
     result.zipFilePath = createZipFile(generatedImages, outputDir, baseName + "_水印图片");
+    LOG_MESSAGE("ZIP file path: " + result.zipFilePath);
+    LOG_MESSAGE("ZIP file exists: " + QString(QFile::exists(result.zipFilePath) ? "Yes" : "No"));
+    if (QFile::exists(result.zipFilePath)) {
+        QFileInfo zipInfo(result.zipFilePath);
+        LOG_MESSAGE("ZIP file size: " + QString::number(zipInfo.size()) + " bytes");
+    }
 
     // 7. 清理临时文件
     QFile::remove(pdfPath);

@@ -934,8 +934,10 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
     }
 
     // 读取生成的 ZIP 文件
+    qDebug() << "[Watermark] Attempting to open ZIP file:" << watermarkResult.zipFilePath;
     QFile zipFile(watermarkResult.zipFilePath);
     if (!zipFile.open(QIODevice::ReadOnly)) {
+        qDebug() << "[Watermark] ERROR: Failed to open ZIP file!";
         response.statusCode = 500;
         response.statusText = "Internal Server Error";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
@@ -945,8 +947,10 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
         return;
     }
 
+    qDebug() << "[Watermark] Successfully opened ZIP file";
     QByteArray zipData = zipFile.readAll();
     zipFile.close();
+    qDebug() << "[Watermark] Read" << zipData.size() << "bytes from ZIP file";
 
     // 清理临时目录
     QDir(tempDir).removeRecursively();
