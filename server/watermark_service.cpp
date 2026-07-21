@@ -758,29 +758,61 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
         LOG_MESSAGE("Detected docx format");
         file.close();
 
-        // 使用 QProcess 解压并提取
+        // 使用临时目录解压
         QTemporaryDir tempDir;
         if (!tempDir.isValid()) {
             LOG_MESSAGE("Error: Failed to create temp directory");
             return QString();
         }
 
+        // 解压 docx 文件
         QProcess unzip;
-        unzip.start("unzip", QStringList() << "-q" << "-o" << wordFilePath << "word/document.xml" << "-d" << tempDir.path());
-        if (!unzip.waitForStarted(5000) || !unzip.waitForFinished(10000)) {
-            LOG_MESSAGE("Error: Failed to unzip docx file");
+        #ifdef Q_OS_WIN
+        // Windows: 使用 PowerShell Expand-Archive
+        QStringList args;
+        args << "-Command"
+             << QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
+                .arg(QDir::toNativeSeparators(wordFilePath), QDir::toNativeSeparators(tempDir.path()));
+        LOG_MESSAGE("Extracting docx with PowerShell: " + args.join(" "));
+        unzip.start("powershell", args);
+        #else
+        // Linux/Mac: 使用 unzip
+        unzip.start("unzip", QStringList() << "-q" << "-o" << wordFilePath << "-d" << tempDir.path());
+        #endif
+
+        if (!unzip.waitForStarted(5000)) {
+            LOG_MESSAGE("Error: Failed to start unzip process");
             return QString();
         }
+
+        if (!unzip.waitForFinished(10000)) {
+            LOG_MESSAGE("Error: Unzip timeout");
+            unzip.kill();
+            return QString();
+        }
+
+        if (unzip.exitCode() != 0) {
+            LOG_MESSAGE("Error: Unzip failed with exit code " + QString::number(unzip.exitCode()));
+            QString errorOutput = QString::fromLocal8Bit(unzip.readAllStandardError());
+            if (!errorOutput.isEmpty()) {
+                LOG_MESSAGE("Unzip error: " + errorOutput);
+            }
+            return QString();
+        }
+
+        LOG_MESSAGE("Successfully extracted docx file");
 
         QString xmlPath = tempDir.path() + "/word/document.xml";
         QFile xmlFile(xmlPath);
         if (!xmlFile.open(QIODevice::ReadOnly)) {
-            LOG_MESSAGE("Error: Failed to open document.xml from docx");
+            LOG_MESSAGE("Error: Failed to open document.xml from docx: " + xmlPath);
+            LOG_MESSAGE("Checking if file exists: " + QString(QFile::exists(xmlPath) ? "Yes" : "No"));
             return QString();
         }
 
         content = QString::fromUtf8(xmlFile.readAll());
         xmlFile.close();
+        LOG_MESSAGE("Read document.xml, size: " + QString::number(content.size()) + " chars");
 
         // 搜索"建议："
         int suggestionIndex = content.indexOf("建议：");
@@ -788,6 +820,8 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
             LOG_MESSAGE("Warning: No '建议：' found in docx document");
             return QString();
         }
+
+        LOG_MESSAGE("Found '建议：' at position " + QString::number(suggestionIndex));
 
         // 提取"建议："后的内容
         int startPos = suggestionIndex;
