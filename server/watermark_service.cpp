@@ -13,6 +13,7 @@
 #include <QTemporaryFile>
 #include <QTemporaryDir>
 #include <QDebug>
+#include <QImageReader>
 #include <cmath>
 
 // 调试宏：同时输出到控制台和日志信号
@@ -240,22 +241,57 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
     if (QFile::exists(baseImagePath)) {
         QFileInfo fileInfo(baseImagePath);
         LOG_MESSAGE("File size: " + QString::number(fileInfo.size()) + " bytes");
+
+        // Check file magic bytes (first 16 bytes)
+        QFile checkFile(baseImagePath);
+        if (checkFile.open(QIODevice::ReadOnly)) {
+            QByteArray header = checkFile.read(16);
+            QString hexHeader;
+            for (unsigned char byte : header) {
+                hexHeader += QString("%1 ").arg(byte, 2, 16, QChar('0')).toUpper();
+            }
+            LOG_MESSAGE("File header (hex): " + hexHeader);
+            checkFile.close();
+
+            // Check if it's a valid JPEG (starts with FF D8 FF)
+            if (header.size() >= 3 &&
+                (unsigned char)header[0] == 0xFF &&
+                (unsigned char)header[1] == 0xD8 &&
+                (unsigned char)header[2] == 0xFF) {
+                LOG_MESSAGE("File has valid JPEG magic bytes");
+            } else {
+                LOG_MESSAGE("WARNING: File does NOT have valid JPEG magic bytes!");
+            }
+        }
     }
 
     QImage baseImage(baseImagePath);
     if (baseImage.isNull()) {
         LOG_MESSAGE("Error: QImage failed to load the file");
-        LOG_MESSAGE("Checking for multi-page output...");
 
-        // LibreOffice 可能生成了多页，尝试查找第一页
-        QFileInfo info(baseImagePath);
-        QString baseName = info.completeBaseName();
-        QString firstPagePath = info.dir().absolutePath() + "/" + baseName + "_1.jpg";
+        // Try loading with explicit format hint
+        LOG_MESSAGE("Attempting to load with explicit JPG format...");
+        QImageReader reader(baseImagePath, "JPG");
+        baseImage = reader.read();
+        if (baseImage.isNull()) {
+            LOG_MESSAGE("QImageReader also failed: " + reader.errorString());
+        } else {
+            LOG_MESSAGE("SUCCESS: QImageReader loaded the image!");
+        }
 
-        if (QFile::exists(firstPagePath)) {
-            LOG_MESSAGE("Found multi-page output, using first page: " + firstPagePath);
-            baseImage.load(firstPagePath);
-            baseImagePath = firstPagePath;
+        if (baseImage.isNull()) {
+            LOG_MESSAGE("Checking for multi-page output...");
+
+            // LibreOffice 可能生成了多页，尝试查找第一页
+            QFileInfo info(baseImagePath);
+            QString baseName = info.completeBaseName();
+            QString firstPagePath = info.dir().absolutePath() + "/" + baseName + "_1.jpg";
+
+            if (QFile::exists(firstPagePath)) {
+                LOG_MESSAGE("Found multi-page output, using first page: " + firstPagePath);
+                baseImage.load(firstPagePath);
+                baseImagePath = firstPagePath;
+            }
         }
 
         if (baseImage.isNull()) {
