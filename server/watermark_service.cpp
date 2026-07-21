@@ -768,11 +768,18 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
         // 解压 docx 文件
         QProcess unzip;
         #ifdef Q_OS_WIN
-        // Windows: 使用 PowerShell Expand-Archive
+        // Windows: PowerShell Expand-Archive 只支持 .zip 扩展名
+        // 创建临时 .zip 副本
+        QString zipPath = wordFilePath + ".zip";
+        if (!QFile::copy(wordFilePath, zipPath)) {
+            LOG_MESSAGE("Error: Failed to create .zip copy");
+            return QString();
+        }
+
         QStringList args;
         args << "-Command"
              << QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
-                .arg(QDir::toNativeSeparators(wordFilePath), QDir::toNativeSeparators(tempDir.path()));
+                .arg(QDir::toNativeSeparators(zipPath), QDir::toNativeSeparators(tempDir.path()));
         LOG_MESSAGE("Extracting docx with PowerShell: " + args.join(" "));
         unzip.start("powershell", args);
         #else
@@ -782,14 +789,25 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
 
         if (!unzip.waitForStarted(5000)) {
             LOG_MESSAGE("Error: Failed to start unzip process");
+            #ifdef Q_OS_WIN
+            QFile::remove(zipPath);
+            #endif
             return QString();
         }
 
         if (!unzip.waitForFinished(10000)) {
             LOG_MESSAGE("Error: Unzip timeout");
             unzip.kill();
+            #ifdef Q_OS_WIN
+            QFile::remove(zipPath);
+            #endif
             return QString();
         }
+
+        #ifdef Q_OS_WIN
+        // 清理临时 .zip 文件
+        QFile::remove(zipPath);
+        #endif
 
         if (unzip.exitCode() != 0) {
             LOG_MESSAGE("Error: Unzip failed with exit code " + QString::number(unzip.exitCode()));
