@@ -55,6 +55,7 @@ jobs:
         Copy-Item build/bin/Release/*.dll CrossNetShare-Release/Server/ -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/platforms CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/styles CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
+        Copy-Item build/bin/Release/plugins CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
 
         # 复制客户端
         Copy-Item build/bin/Release/CrossNetShareClient.exe CrossNetShare-Release/Client/
