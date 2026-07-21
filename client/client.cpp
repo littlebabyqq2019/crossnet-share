@@ -57,6 +57,7 @@ bool Client::connectToServer(const QString& host, quint16 port) {
 
     serverHost_ = host;
     serverPort_ = port;
+    autoReconnect_ = true;  // 启用自动重连
 
     emit logMessage("Connecting to " + host + ":" + QString::number(port) + "...");
     socket_->connectToHost(host, port);
