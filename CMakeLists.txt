@@ -155,4 +155,30 @@ if(WIN32)
     # GUI应用（不显示控制台）
     set_target_properties(CrossNetShareServer PROPERTIES WIN32_EXECUTABLE TRUE)
     set_target_properties(CrossNetShareClient PROPERTIES WIN32_EXECUTABLE TRUE)
+
+    # 部署Qt插件（图像格式插件）
+    # 获取Qt安装路径
+    get_target_property(QT_QMAKE_EXECUTABLE Qt5::qmake IMPORTED_LOCATION)
+    get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
+    get_filename_component(QT_ROOT_DIR "${QT_BIN_DIR}" DIRECTORY)
+    set(QT_PLUGINS_DIR "${QT_ROOT_DIR}/plugins")
+
+    # 在构建后复制图像格式插件到输出目录
+    add_custom_command(TARGET CrossNetShareServer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:CrossNetShareServer>/plugins/imageformats"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT_PLUGINS_DIR}/imageformats/qjpeg.dll"
+            "$<TARGET_FILE_DIR:CrossNetShareServer>/plugins/imageformats/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT_PLUGINS_DIR}/imageformats/qgif.dll"
+            "$<TARGET_FILE_DIR:CrossNetShareServer>/plugins/imageformats/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT_PLUGINS_DIR}/imageformats/qico.dll"
+            "$<TARGET_FILE_DIR:CrossNetShareServer>/plugins/imageformats/"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT_PLUGINS_DIR}/imageformats/qsvg.dll"
+            "$<TARGET_FILE_DIR:CrossNetShareServer>/plugins/imageformats/"
+        COMMENT "Copying Qt image format plugins..."
+    )
 endif()
