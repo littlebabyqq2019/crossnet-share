@@ -264,6 +264,7 @@ void WebServer::handleRequest(QTcpSocket* socket, const HttpRequest& request) {
     } else if (request.path == "/api/preview") {
         handleFilePreview(socket, request);
     } else if (request.path == "/api/watermark/generate") {
+        qDebug() << "[Watermark] Route matched: /api/watermark/generate";
         handleWatermarkGenerate(socket, request);
     } else {
         HttpResponse response;
