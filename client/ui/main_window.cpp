@@ -56,6 +56,12 @@ MainWindow::MainWindow(QWidget* parent)
         QString clientId = client_->getClientId();
         QString sharePath = client_->getSharePath();
 
+        onLogMessage(QString("Config values - Host: %1, Port: %2, ClientID: %3, SharePath: %4")
+            .arg(host.isEmpty() ? "(empty)" : host)
+            .arg(port)
+            .arg(clientId.isEmpty() ? "(empty)" : clientId)
+            .arg(sharePath.isEmpty() ? "(empty)" : sharePath));
+
         if (!host.isEmpty() && port > 0 && !clientId.isEmpty() && !sharePath.isEmpty()) {
             onLogMessage("Auto-connecting to " + host + ":" + QString::number(port));
 
@@ -68,8 +74,14 @@ MainWindow::MainWindow(QWidget* parent)
             // 连接
             if (client_->connectToServer(host, port)) {
                 onLogMessage("Auto-connect initiated, will auto-register after connection");
+            } else {
+                onLogMessage("Auto-connect failed to initiate");
             }
+        } else {
+            onLogMessage("Auto-connect skipped: missing required configuration");
         }
+    } else {
+        onLogMessage("No saved configuration found, manual setup required");
     }
 
     updateConnectionStatus();
