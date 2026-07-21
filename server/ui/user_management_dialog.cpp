@@ -95,7 +95,8 @@ void UserManagementDialog::onAddUser() {
         if (UserManager::instance()->addUser(username, password, isAdmin, permission)) {
             // 保存到文件
             QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
-            UserManager::instance()->saveToFile(configFile);
+            bool saved = UserManager::instance()->saveToFile(configFile);
+            qDebug() << "[UserManagement] Saved to" << configFile << ":" << (saved ? "SUCCESS" : "FAILED");
 
             QMessageBox::information(this, "成功", "用户添加成功");
             loadUsers();
@@ -132,7 +133,8 @@ void UserManagementDialog::onEditUser() {
 
         // 保存到文件
         QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
-        UserManager::instance()->saveToFile(configFile);
+        bool saved = UserManager::instance()->saveToFile(configFile);
+        qDebug() << "[UserManagement] Saved to" << configFile << ":" << (saved ? "SUCCESS" : "FAILED");
 
         QMessageBox::information(this, "成功", "用户信息更新成功");
         loadUsers();
@@ -162,7 +164,8 @@ void UserManagementDialog::onDeleteUser() {
         if (UserManager::instance()->removeUser(username)) {
             // 保存到文件
             QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
-            UserManager::instance()->saveToFile(configFile);
+            bool saved = UserManager::instance()->saveToFile(configFile);
+            qDebug() << "[UserManagement] Saved to" << configFile << ":" << (saved ? "SUCCESS" : "FAILED");
 
             QMessageBox::information(this, "成功", "用户删除成功");
             loadUsers();
