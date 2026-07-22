@@ -1,7 +1,6 @@
 #include "settings_dialog.h"
 #include "user_management_dialog.h"
 #include "audit_log_dialog.h"
-#include "add_edit_keyword_dialog.h"
 #include "common/autostart.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -465,18 +464,26 @@ void SettingsDialog::updateColorButton() {
 }
 
 void SettingsDialog::onAddKeywordClicked() {
-    AddEditKeywordDialog dialog(this);
-    if (dialog.exec() == QDialog::Accepted) {
-        WatermarkService::KeywordRule rule;
-        rule.keyword = dialog.getKeyword();
-        rule.watermarkText = dialog.getWatermarkText();
-
-        QList<WatermarkService::KeywordRule> keywords = watermarkService_->getKeywords();
-        keywords.append(rule);
-        watermarkService_->setKeywords(keywords);
-        watermarkService_->saveConfig();
-        updateKeywordsTable();
+    bool okDetect, okWatermark;
+    QString detectText = QInputDialog::getText(this, "添加关键词", "检测文本:", QLineEdit::Normal, "", &okDetect);
+    if (!okDetect || detectText.isEmpty()) {
+        return;
     }
+
+    QString watermarkText = QInputDialog::getText(this, "添加关键词", "水印文本:", QLineEdit::Normal, detectText, &okWatermark);
+    if (!okWatermark || watermarkText.isEmpty()) {
+        return;
+    }
+
+    WatermarkService::KeywordRule rule;
+    rule.keyword = detectText;
+    rule.watermarkText = watermarkText;
+
+    QList<WatermarkService::KeywordRule> keywords = watermarkService_->getKeywords();
+    keywords.append(rule);
+    watermarkService_->setKeywords(keywords);
+    watermarkService_->saveConfig();
+    updateKeywordsTable();
 }
 
 void SettingsDialog::onEditKeywordClicked() {
@@ -489,17 +496,24 @@ void SettingsDialog::onEditKeywordClicked() {
     QList<WatermarkService::KeywordRule> keywords = watermarkService_->getKeywords();
     if (row >= keywords.size()) return;
 
-    AddEditKeywordDialog dialog(this);
-    dialog.setKeyword(keywords[row].keyword);
-    dialog.setWatermarkText(keywords[row].watermarkText);
-
-    if (dialog.exec() == QDialog::Accepted) {
-        keywords[row].keyword = dialog.getKeyword();
-        keywords[row].watermarkText = dialog.getWatermarkText();
-        watermarkService_->setKeywords(keywords);
-        watermarkService_->saveConfig();
-        updateKeywordsTable();
+    bool okDetect, okWatermark;
+    QString detectText = QInputDialog::getText(this, "编辑关键词", "检测文本:",
+                                                QLineEdit::Normal, keywords[row].keyword, &okDetect);
+    if (!okDetect || detectText.isEmpty()) {
+        return;
     }
+
+    QString watermarkText = QInputDialog::getText(this, "编辑关键词", "水印文本:",
+                                                   QLineEdit::Normal, keywords[row].watermarkText, &okWatermark);
+    if (!okWatermark || watermarkText.isEmpty()) {
+        return;
+    }
+
+    keywords[row].keyword = detectText;
+    keywords[row].watermarkText = watermarkText;
+    watermarkService_->setKeywords(keywords);
+    watermarkService_->saveConfig();
+    updateKeywordsTable();
 }
 
 void SettingsDialog::onDeleteKeywordClicked() {
