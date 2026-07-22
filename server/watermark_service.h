@@ -87,7 +87,6 @@ private:
     QString convertPdfToJpg(const QString& pdfFilePath, const QString& outputDir);
     QString convertWordToHtml(const QString& wordFilePath, const QString& outputDir);
     QString convertDocumentToJpg(const QString& wordFilePath, const QString& outputDir);
-    QString convertWordToJpgLibreOffice(const QString& wordFilePath, const QString& outputDir);
 
     // 表格解析
     QString extractOpinionText(const QString& htmlFilePath);
@@ -96,7 +95,7 @@ private:
     QString extractSuggestionFromWord(const QString& wordFilePath);
 
     // 关键词匹配
-    QStringList matchKeywords(const QString& text);
+    QList<KeywordRule> matchKeywords(const QString& text);
 
     // 水印绘制
     QImage addWatermark(const QImage& source, const QString& text);

@@ -225,23 +225,31 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
     }
 
     // 3. 匹配关键词
-    QStringList matchedKeywords;
+    QList<KeywordRule> matchedRules;
     if (config_.enableUnified) {
         // 统一水印模式：使用配置的统一文字
         if (!config_.unifiedText.isEmpty()) {
-            matchedKeywords.append(config_.unifiedText);
+            KeywordRule unifiedRule;
+            unifiedRule.detectText = "统一水印";
+            unifiedRule.watermarkText = config_.unifiedText;
+            unifiedRule.enabled = true;
+            matchedRules.append(unifiedRule);
         }
     } else {
         // 关键词模式：匹配检测到的关键词
         if (!suggestionText.isEmpty()) {
-            matchedKeywords = matchKeywords(suggestionText);
+            matchedRules = matchKeywords(suggestionText);
         }
     }
 
-    if (matchedKeywords.isEmpty()) {
+    if (matchedRules.isEmpty()) {
         // 没有匹配到关键词，生成无水印原图
         LOG_MESSAGE("No keywords matched, generating original image");
-        matchedKeywords.append("");  // 空字符串表示无水印
+        KeywordRule emptyRule;
+        emptyRule.detectText = "";
+        emptyRule.watermarkText = "";
+        emptyRule.enabled = true;
+        matchedRules.append(emptyRule);
     }
 
     // 4. 转换文档为图片（优先使用Word COM直接渲染，保证字体正确）
@@ -331,20 +339,21 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
     QString baseName = QFileInfo(originalFileName).completeBaseName();
 
     int current = 0;
-    for (const QString& keyword : matchedKeywords) {
+    for (const KeywordRule& rule : matchedRules) {
         current++;
 
         QImage watermarkedImage;
         QString outputFileName;
 
-        if (keyword.isEmpty()) {
+        if (rule.watermarkText.isEmpty()) {
             // 无水印原图
             watermarkedImage = baseImage;
             outputFileName = baseName + ".jpg";
         } else {
             // 添加水印
-            watermarkedImage = addWatermark(baseImage, keyword);
-            outputFileName = keyword + "-" + baseName + ".jpg";
+            watermarkedImage = addWatermark(baseImage, rule.watermarkText);
+            // 使用检测关键词作为文件名前缀
+            outputFileName = rule.detectText + "-" + baseName + ".jpg";
         }
 
         QString outputPath = outputDir + "/" + outputFileName;
@@ -621,17 +630,18 @@ QString WatermarkService::convertWordToHtml(const QString& wordFilePath, const Q
 
 QString WatermarkService::convertDocumentToJpg(const QString& wordFilePath, const QString& outputDir) {
 #ifdef Q_OS_WIN
-    // Windows: 优先使用 Word COM API 直接导出为图片（保证字体正确且速度快）
-
-    // 尝试使用 DocumentConverter 的 Word COM
+    // Windows: 使用 Word COM API 转换
     QString pdfPath = convertWordToPdf(wordFilePath, outputDir);
     if (pdfPath.isEmpty()) {
-        LOG_MESSAGE("Word COM not available, falling back to LibreOffice");
-        return convertWordToJpgLibreOffice(wordFilePath, outputDir);
+        QString errorMsg = "错误：未检测到 Microsoft Word\n\n"
+                          "请安装 Microsoft Word 以处理 Word 文档。\n"
+                          "下载地址：https://www.microsoft.com/zh-cn/microsoft-365/word";
+        LOG_MESSAGE(errorMsg);
+        emit logMessage(errorMsg);
+        return QString();
     }
 
-    // 使用 PDF 转 JPG（后续可改为直接从Word导出图片）
-    // 目前先通过PDF中转，确保字体正确
+    // 使用 Ghostscript 转 JPG
     QString jpgPath = convertPdfToJpg(pdfPath, outputDir);
 
     // 删除临时PDF
@@ -641,95 +651,12 @@ QString WatermarkService::convertDocumentToJpg(const QString& wordFilePath, cons
 
     return jpgPath;
 #else
-    // Linux/Mac: 使用 LibreOffice
-    return convertWordToJpgLibreOffice(wordFilePath, outputDir);
+    QString errorMsg = "错误：仅支持 Windows 系统\n\n"
+                      "Word 文档处理需要 Microsoft Word，目前仅支持 Windows 系统。";
+    LOG_MESSAGE(errorMsg);
+    emit logMessage(errorMsg);
+    return QString();
 #endif
-}
-
-QString WatermarkService::convertWordToJpgLibreOffice(const QString& wordFilePath, const QString& outputDir) {
-    // 尝试多个可能的 LibreOffice 可执行文件名
-    QStringList possibleCommands = {"soffice", "soffice.exe", "libreoffice", "libreoffice.exe"};
-    QString sofficePath;
-
-    // 检查哪个命令可用
-    for (const QString& cmd : possibleCommands) {
-        QProcess testProcess;
-        configureProcessNoWindow(&testProcess);
-        testProcess.start(cmd, QStringList() << "--version");
-        if (testProcess.waitForStarted(1000)) {
-            testProcess.waitForFinished(3000);
-            sofficePath = cmd;
-            break;
-        }
-    }
-
-    if (sofficePath.isEmpty()) {
-        emit logMessage("Error: LibreOffice not found for JPG conversion");
-        return QString();
-    }
-
-    QStringList args;
-    args << "--headless"
-         << "--convert-to" << "jpg"
-         << "--outdir" << outputDir
-         << wordFilePath;
-
-    emit logMessage("Converting Word to JPG using: " + sofficePath);
-    emit logMessage("Input file: " + wordFilePath);
-    emit logMessage("Output dir: " + outputDir);
-    emit logMessage("Command: " + sofficePath + " " + args.join(" "));
-
-    // 检查输入文件是否存在
-    if (!QFile::exists(wordFilePath)) {
-        emit logMessage("Error: Input Word file does not exist: " + wordFilePath);
-        return QString();
-    }
-
-    // 确保输出目录存在
-    QDir dir(outputDir);
-    if (!dir.exists()) {
-        if (!dir.mkpath(".")) {
-            emit logMessage("Error: Failed to create output directory");
-            return QString();
-        }
-    }
-
-    QProcess process;
-    configureProcessNoWindow(&process);
-    process.setWorkingDirectory(outputDir);
-    process.start(sofficePath, args);
-
-    if (!process.waitForStarted(5000)) {
-        emit logMessage("Error: Failed to start LibreOffice for JPG conversion");
-        return QString();
-    }
-
-    if (!process.waitForFinished(30000)) {
-        emit logMessage("Error: LibreOffice JPG conversion timeout");
-        process.kill();
-        return QString();
-    }
-
-    if (process.exitCode() != 0) {
-        QString stderr_output = QString::fromLocal8Bit(process.readAllStandardError());
-        QString stdout_output = QString::fromLocal8Bit(process.readAllStandardOutput());
-        emit logMessage("Error: LibreOffice JPG conversion failed (exit code: " + QString::number(process.exitCode()) + ")");
-        if (!stderr_output.isEmpty()) emit logMessage("stderr: " + stderr_output);
-        if (!stdout_output.isEmpty()) emit logMessage("stdout: " + stdout_output);
-        return QString();
-    }
-
-    // 计算输出文件名
-    QString baseName = QFileInfo(wordFilePath).completeBaseName();
-    QString jpgPath = outputDir + "/" + baseName + ".jpg";
-
-    if (!QFile::exists(jpgPath)) {
-        emit logMessage("Error: JPG file not generated: " + jpgPath);
-        return QString();
-    }
-
-    emit logMessage("Successfully converted to JPG: " + jpgPath);
-    return jpgPath;
 }
 
 QString WatermarkService::extractOpinionText(const QString& htmlFilePath) {
@@ -929,8 +856,8 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
     return QString();
 }
 
-QStringList WatermarkService::matchKeywords(const QString& text) {
-    QStringList matched;
+QList<WatermarkService::KeywordRule> WatermarkService::matchKeywords(const QString& text) {
+    QList<KeywordRule> matched;
 
     for (const KeywordRule& rule : keywords_) {
         if (!rule.enabled) {
@@ -939,7 +866,7 @@ QStringList WatermarkService::matchKeywords(const QString& text) {
 
         // 精确匹配整个短语
         if (text.contains(rule.detectText)) {
-            matched.append(rule.watermarkText);
+            matched.append(rule);
             LOG_MESSAGE("Matched keyword: " + rule.detectText + " -> " + rule.watermarkText);
         }
     }
