@@ -3,6 +3,7 @@
 #include "watermark_settings_dialog.h"
 #include "../watermark_service.h"
 #include "../document_converter.h"
+#include "../user_manager.h"
 #include "common/autostart.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -14,6 +15,7 @@
 #include <QCoreApplication>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDebug>
 
 namespace CrossNetShare {
 
@@ -27,6 +29,19 @@ MainWindow::MainWindow(QWidget* parent)
 {
     setupUi();
     setupTrayIcon();
+
+    // 加载用户配置
+    QString userConfigFile = QCoreApplication::applicationDirPath() + "/users.json";
+    if (QFile::exists(userConfigFile)) {
+        bool loaded = UserManager::instance()->loadFromFile(userConfigFile);
+        qDebug() << "[MainWindow] Load users from" << userConfigFile << ":" << (loaded ? "SUCCESS" : "FAILED");
+        if (loaded) {
+            int userCount = UserManager::instance()->getAllUsers().size();
+            qDebug() << "[MainWindow] Loaded" << userCount << "users";
+        }
+    } else {
+        qDebug() << "[MainWindow] User config file not found:" << userConfigFile;
+    }
 
     connect(server_, &Server::started, this, &MainWindow::onServerStarted);
     connect(server_, &Server::stopped, this, &MainWindow::onServerStopped);
@@ -413,8 +428,11 @@ void MainWindow::onCleanupCache() {
 }
 
 void MainWindow::onSettingsClicked() {
-    SettingsDialog dialog(this);
-    dialog.exec();
+    SettingsDialog dialog(watermarkService_, this);
+    if (dialog.exec() == QDialog::Accepted) {
+        // 保存水印设置
+        dialog.saveWatermarkSettings();
+    }
 }
 
 void MainWindow::onWatermarkSettingsClicked() {

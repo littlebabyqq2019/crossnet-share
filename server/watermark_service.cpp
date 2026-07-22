@@ -967,14 +967,14 @@ QImage WatermarkService::addWatermark(const QImage& source, const QString& text)
     QRect textRect = fm.boundingRect(text);
 
     // 根据密度计算间距
-    int baseSpacing = qMax(textRect.width(), textRect.height()) * 2;
+    int baseSpacing = qMax(textRect.width(), textRect.height()) * 3;  // 增加基础间距
     int spacing = baseSpacing;
     if (config_.density == "sparse") {
-        spacing = baseSpacing * 2;
+        spacing = baseSpacing * 2.5;  // 稀疏：更大间距
     } else if (config_.density == "dense") {
-        spacing = baseSpacing;
+        spacing = baseSpacing * 0.8;  // 密集：较小间距
     } else {  // medium
-        spacing = baseSpacing * 1.5;
+        spacing = baseSpacing * 1.5;  // 中等
     }
 
     // 保存当前状态
