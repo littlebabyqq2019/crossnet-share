@@ -307,7 +307,16 @@ void SettingsDialog::onAddUserClicked() {
     bool isAdmin = (reply == QMessageBox::Yes);
 
     if (UserManager::instance()->addUser(username, password, isAdmin)) {
-        QMessageBox::information(this, "成功", "用户添加成功！");
+        // 保存到文件
+        QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
+        bool saved = UserManager::instance()->saveToFile(configFile);
+        qDebug() << "[Settings] Add user - saved to" << configFile << ":" << (saved ? "SUCCESS" : "FAILED");
+
+        if (saved) {
+            QMessageBox::information(this, "成功", "用户添加成功并已保存！");
+        } else {
+            QMessageBox::warning(this, "保存失败", "用户已添加但保存到文件失败！");
+        }
         loadUsers();
     } else {
         QMessageBox::warning(this, "失败", "用户添加失败！可能用户名已存在。");
@@ -336,7 +345,16 @@ void SettingsDialog::onRemoveUserClicked() {
     }
 
     if (UserManager::instance()->removeUser(username)) {
-        QMessageBox::information(this, "成功", "用户删除成功！");
+        // 保存到文件
+        QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
+        bool saved = UserManager::instance()->saveToFile(configFile);
+        qDebug() << "[Settings] Remove user - saved to" << configFile << ":" << (saved ? "SUCCESS" : "FAILED");
+
+        if (saved) {
+            QMessageBox::information(this, "成功", "用户删除成功并已保存！");
+        } else {
+            QMessageBox::warning(this, "保存失败", "用户已删除但保存到文件失败！");
+        }
         loadUsers();
     } else {
         QMessageBox::warning(this, "失败", "用户删除失败！");
@@ -359,7 +377,16 @@ void SettingsDialog::onChangePasswordClicked() {
     }
 
     if (UserManager::instance()->updatePassword(username, newPassword)) {
-        QMessageBox::information(this, "成功", "密码修改成功！");
+        // 保存到文件
+        QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
+        bool saved = UserManager::instance()->saveToFile(configFile);
+        qDebug() << "[Settings] Change password - saved to" << configFile << ":" << (saved ? "SUCCESS" : "FAILED");
+
+        if (saved) {
+            QMessageBox::information(this, "成功", "密码修改成功并已保存！");
+        } else {
+            QMessageBox::warning(this, "保存失败", "密码已修改但保存到文件失败！");
+        }
     } else {
         QMessageBox::warning(this, "失败", "密码修改失败！");
     }
