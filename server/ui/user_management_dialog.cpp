@@ -96,10 +96,18 @@ void UserManagementDialog::onAddUser() {
         if (UserManager::instance()->addUser(username, password, isAdmin, permission)) {
             // 保存到文件
             QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
-            bool saved = UserManager::instance()->saveToFile(configFile);
-            qDebug() << "[UserManagement] Saved to" << configFile << ":" << (saved ? "SUCCESS" : "FAILED");
+            qDebug() << "[UserManagement] About to save to:" << configFile;
+            qDebug() << "[UserManagement] Current user count:" << UserManager::instance()->getAllUsers().size();
 
-            QMessageBox::information(this, "成功", "用户添加成功");
+            bool saved = UserManager::instance()->saveToFile(configFile);
+
+            qDebug() << "[UserManagement] Save result:" << (saved ? "SUCCESS" : "FAILED");
+
+            if (saved) {
+                QMessageBox::information(this, "成功", "用户添加成功，已保存到:\n" + configFile);
+            } else {
+                QMessageBox::warning(this, "保存失败", "用户已添加但保存到文件失败:\n" + configFile);
+            }
             loadUsers();
         } else {
             QMessageBox::warning(this, "失败", "用户添加失败，用户名可能已存在");
@@ -134,10 +142,17 @@ void UserManagementDialog::onEditUser() {
 
         // 保存到文件
         QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
-        bool saved = UserManager::instance()->saveToFile(configFile);
-        qDebug() << "[UserManagement] Saved to" << configFile << ":" << (saved ? "SUCCESS" : "FAILED");
+        qDebug() << "[UserManagement] About to save after edit to:" << configFile;
 
-        QMessageBox::information(this, "成功", "用户信息更新成功");
+        bool saved = UserManager::instance()->saveToFile(configFile);
+
+        qDebug() << "[UserManagement] Edit save result:" << (saved ? "SUCCESS" : "FAILED");
+
+        if (saved) {
+            QMessageBox::information(this, "成功", "用户信息更新成功");
+        } else {
+            QMessageBox::warning(this, "保存失败", "用户已更新但保存到文件失败");
+        }
         loadUsers();
     }
 }
@@ -165,10 +180,17 @@ void UserManagementDialog::onDeleteUser() {
         if (UserManager::instance()->removeUser(username)) {
             // 保存到文件
             QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
-            bool saved = UserManager::instance()->saveToFile(configFile);
-            qDebug() << "[UserManagement] Saved to" << configFile << ":" << (saved ? "SUCCESS" : "FAILED");
+            qDebug() << "[UserManagement] About to save after delete to:" << configFile;
 
-            QMessageBox::information(this, "成功", "用户删除成功");
+            bool saved = UserManager::instance()->saveToFile(configFile);
+
+            qDebug() << "[UserManagement] Delete save result:" << (saved ? "SUCCESS" : "FAILED");
+
+            if (saved) {
+                QMessageBox::information(this, "成功", "用户删除成功");
+            } else {
+                QMessageBox::warning(this, "保存失败", "用户已删除但保存到文件失败");
+            }
             loadUsers();
         } else {
             QMessageBox::warning(this, "失败", "用户删除失败");
