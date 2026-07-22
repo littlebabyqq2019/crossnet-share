@@ -49,7 +49,6 @@ private slots:
     void onRotationChanged(int value);
     void onColorButtonClicked();
     void onEnableWatermarkToggled(bool checked);
-    void onDetectLibreOfficeClicked();
     void onSaveClicked();
 
 private:
@@ -89,7 +88,6 @@ private:
     QSlider* rotationSlider_;
     QLabel* rotationLabel_;
     QComboBox* densityComboBox_;
-    QPushButton* detectLibreOfficeButton_;
     QColor currentColor_;
 };
 

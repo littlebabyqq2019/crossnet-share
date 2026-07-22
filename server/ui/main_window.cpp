@@ -233,15 +233,6 @@ void MainWindow::setupUi() {
     connect(settingsButton, &QPushButton::clicked, this, &MainWindow::onSettingsClicked);
     buttonLayout->addWidget(settingsButton);
 
-    QPushButton* watermarkButton = new QPushButton("水印设置");
-    watermarkButton->setStyleSheet(
-        "QPushButton { padding: 10px 24px; font-size: 10pt; background-color: white; border: 1px solid #d1d5db; border-radius: 6px; } "
-        "QPushButton:hover { background-color: #f3f4f6; }"
-    );
-    watermarkButton->setMinimumHeight(42);
-    connect(watermarkButton, &QPushButton::clicked, this, &MainWindow::onWatermarkSettingsClicked);
-    buttonLayout->addWidget(watermarkButton);
-
     buttonLayout->addStretch();
     configMainLayout->addLayout(buttonLayout);
 
@@ -435,9 +426,5 @@ void MainWindow::onSettingsClicked() {
     }
 }
 
-void MainWindow::onWatermarkSettingsClicked() {
-    WatermarkSettingsDialog dialog(watermarkService_, this);
-    dialog.exec();
-}
 
 }

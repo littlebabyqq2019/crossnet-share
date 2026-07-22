@@ -47,11 +47,15 @@ int UserManager::findUserIndex(const QString& username) const {
 bool UserManager::addUser(const QString& username, const QString& password, bool isAdmin, UserPermission permission) {
     QMutexLocker locker(&mutex_);
 
+    qDebug() << "[UserManager] addUser called - username:" << username << "isAdmin:" << isAdmin;
+
     if (username.isEmpty() || password.isEmpty()) {
+        qDebug() << "[UserManager] addUser failed - empty username or password";
         return false;
     }
 
     if (findUserIndex(username) >= 0) {
+        qDebug() << "[UserManager] addUser failed - user already exists";
         return false;  // 用户已存在
     }
 
@@ -64,6 +68,7 @@ bool UserManager::addUser(const QString& username, const QString& password, bool
     user.createdAt = QDateTime::currentDateTime();
 
     users_.append(user);
+    qDebug() << "[UserManager] addUser success - total users now:" << users_.size();
     return true;
 }
 
@@ -244,7 +249,9 @@ bool UserManager::loadFromFile(const QString& filePath) {
 bool UserManager::saveToFile(const QString& filePath) {
     QMutexLocker locker(&mutex_);
 
-    qDebug() << "[UserManager] Saving" << users_.size() << "users to" << filePath;
+    qDebug() << "[UserManager] ========== Saving users to file ==========";
+    qDebug() << "[UserManager] Total users:" << users_.size();
+    qDebug() << "[UserManager] File path:" << filePath;
 
     QJsonArray usersArray;
     for (const User& user : users_) {
@@ -257,7 +264,7 @@ bool UserManager::saveToFile(const QString& filePath) {
         userObj["permission"] = permissionToString(user.permission);
 
         usersArray.append(userObj);
-        qDebug() << "[UserManager]   - User:" << user.username << "isAdmin:" << user.isAdmin;
+        qDebug() << "[UserManager]   User:" << user.username << "| Admin:" << user.isAdmin << "| Active:" << user.isActive;
     }
 
     QJsonObject root;
@@ -267,19 +274,20 @@ bool UserManager::saveToFile(const QString& filePath) {
 
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
-        qDebug() << "[UserManager] Failed to open file for writing:" << file.errorString();
+        qDebug() << "[UserManager] ERROR: Failed to open file for writing:" << file.errorString();
         return false;
     }
 
-    qint64 written = file.write(doc.toJson());
+    qint64 written = file.write(doc.toJson(QJsonDocument::Indented));
     file.close();
 
     if (written == -1) {
-        qDebug() << "[UserManager] Failed to write to file";
+        qDebug() << "[UserManager] ERROR: Failed to write to file";
         return false;
     }
 
-    qDebug() << "[UserManager] Successfully wrote" << written << "bytes to" << filePath;
+    qDebug() << "[UserManager] SUCCESS: Wrote" << written << "bytes to file";
+    qDebug() << "[UserManager] ========================================";
     return true;
 }
 

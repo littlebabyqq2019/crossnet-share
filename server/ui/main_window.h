@@ -41,7 +41,6 @@ private slots:
     void onServerError(const QString& errorMsg);
     void onCleanupCache();
     void onSettingsClicked();
-    void onWatermarkSettingsClicked();
     void onTrayIconActivated(QSystemTrayIcon::ActivationReason reason);
     void onShowWindow();
     void onQuitApp();

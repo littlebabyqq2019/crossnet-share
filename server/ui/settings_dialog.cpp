@@ -257,14 +257,6 @@ void SettingsDialog::setupUi() {
 
     watermarkLayout->addWidget(styleGroup);
 
-    // LibreOffice 检测
-    QHBoxLayout* detectLayout = new QHBoxLayout();
-    detectLibreOfficeButton_ = new QPushButton("检测 LibreOffice");
-    connect(detectLibreOfficeButton_, &QPushButton::clicked, this, &SettingsDialog::onDetectLibreOfficeClicked);
-    detectLayout->addWidget(detectLibreOfficeButton_);
-    detectLayout->addStretch();
-    watermarkLayout->addLayout(detectLayout);
-
     watermarkLayout->addStretch();
     tabWidget_->addTab(watermarkTab, "水印设置");
 
@@ -555,31 +547,6 @@ void SettingsDialog::onColorButtonClicked() {
 
 void SettingsDialog::onEnableWatermarkToggled(bool checked) {
     // 可以用来启用/禁用其他控件
-}
-
-void SettingsDialog::onDetectLibreOfficeClicked() {
-    QStringList possiblePaths = {
-        "soffice", "soffice.exe",
-        "libreoffice", "libreoffice.exe",
-        "C:/Program Files/LibreOffice/program/soffice.exe"
-    };
-
-    QString found;
-    for (const QString& path : possiblePaths) {
-        QProcess process;
-        process.start(path, QStringList() << "--version");
-        if (process.waitForStarted(1000)) {
-            process.waitForFinished(3000);
-            found = path;
-            break;
-        }
-    }
-
-    if (found.isEmpty()) {
-        QMessageBox::information(this, "检测结果", "未找到 LibreOffice\n\n请从 https://www.libreoffice.org/ 下载安装");
-    } else {
-        QMessageBox::information(this, "检测结果", "已找到 LibreOffice:\n" + found);
-    }
 }
 
 void SettingsDialog::onSaveClicked() {
