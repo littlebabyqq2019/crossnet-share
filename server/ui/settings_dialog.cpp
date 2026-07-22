@@ -452,7 +452,7 @@ void SettingsDialog::updateKeywordsTable() {
     for (const auto& rule : keywords) {
         int row = keywordsTable_->rowCount();
         keywordsTable_->insertRow(row);
-        keywordsTable_->setItem(row, 0, new QTableWidgetItem(rule.keyword));
+        keywordsTable_->setItem(row, 0, new QTableWidgetItem(rule.detectText));
         keywordsTable_->setItem(row, 1, new QTableWidgetItem(rule.watermarkText));
     }
 }
@@ -476,8 +476,9 @@ void SettingsDialog::onAddKeywordClicked() {
     }
 
     WatermarkService::KeywordRule rule;
-    rule.keyword = detectText;
+    rule.detectText = detectText;
     rule.watermarkText = watermarkText;
+    rule.enabled = true;
 
     QList<WatermarkService::KeywordRule> keywords = watermarkService_->getKeywords();
     keywords.append(rule);
@@ -498,7 +499,7 @@ void SettingsDialog::onEditKeywordClicked() {
 
     bool okDetect, okWatermark;
     QString detectText = QInputDialog::getText(this, "编辑关键词", "检测文本:",
-                                                QLineEdit::Normal, keywords[row].keyword, &okDetect);
+                                                QLineEdit::Normal, keywords[row].detectText, &okDetect);
     if (!okDetect || detectText.isEmpty()) {
         return;
     }
@@ -509,7 +510,7 @@ void SettingsDialog::onEditKeywordClicked() {
         return;
     }
 
-    keywords[row].keyword = detectText;
+    keywords[row].detectText = detectText;
     keywords[row].watermarkText = watermarkText;
     watermarkService_->setKeywords(keywords);
     watermarkService_->saveConfig();
