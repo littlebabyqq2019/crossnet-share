@@ -5,6 +5,7 @@
 #include "../document_converter.h"
 #include "../user_manager.h"
 #include "common/autostart.h"
+#include "common/version.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -145,7 +146,7 @@ void MainWindow::onQuitApp() {
 }
 
 void MainWindow::setupUi() {
-    setWindowTitle("CrossNetShare 服务器 v1.2.0");
+    setWindowTitle(QString("CrossNetShare 服务器 v%1").arg(PROJECT_VERSION));
     resize(980, 800);
 
     // 设置全局字体

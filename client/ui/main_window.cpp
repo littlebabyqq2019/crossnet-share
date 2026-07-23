@@ -1,5 +1,6 @@
 #include "main_window.h"
 #include "common/autostart.h"
+#include "common/version.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -170,7 +171,7 @@ void MainWindow::onQuitApp() {
 }
 
 void MainWindow::setupUi() {
-    setWindowTitle("CrossNetShare 客户端 v1.1.0");
+    setWindowTitle(QString("CrossNetShare 客户端 v%1").arg(PROJECT_VERSION));
     resize(1000, 800);
 
     // 设置全局字体
