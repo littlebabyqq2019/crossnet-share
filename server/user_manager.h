@@ -17,7 +17,7 @@ enum UserPermissionFlag : unsigned int {
     DownloadFile      = 0x0008,  // 下载单个文件
     BatchDownload     = 0x0010,  // 批量下载
     WatermarkExport   = 0x0020,  // 水印导出
-    DateFilter        = 0x0040,  // 日期筛选
+    FilterByDate      = 0x0040,  // 日期筛选
     AllPermissions    = 0xFFFF   // 所有权限
 };
 Q_DECLARE_FLAGS(UserPermissions, UserPermissionFlag)
@@ -33,7 +33,7 @@ namespace CrossNetShare {
 namespace PermissionPresets {
     const UserPermissions ReadOnly = UserPermissionFlag::ViewFileList | UserPermissionFlag::PreviewFile;
     const UserPermissions Print = ReadOnly | UserPermissionFlag::PrintFile;
-    const UserPermissions Download = Print | UserPermissionFlag::DownloadFile | UserPermissionFlag::BatchDownload | UserPermissionFlag::DateFilter;
+    const UserPermissions Download = Print | DownloadFile | BatchDownload | FilterByDate;
     const UserPermissions Full = UserPermissionFlag::AllPermissions;
 }
 
@@ -46,7 +46,7 @@ inline QString permissionFlagToString(UserPermissionFlag flag) {
         case UserPermissionFlag::DownloadFile: return "下载";
         case UserPermissionFlag::BatchDownload: return "批量下载";
         case UserPermissionFlag::WatermarkExport: return "水印导出";
-        case UserPermissionFlag::DateFilter: return "日期筛选";
+        case FilterByDate: return "日期筛选";
         default: return "未知";
     }
 }
@@ -63,7 +63,7 @@ inline QString permissionsToString(UserPermissions permissions) {
     if (permissions & UserPermissionFlag::DownloadFile) items << "下载";
     if (permissions & UserPermissionFlag::BatchDownload) items << "批量下载";
     if (permissions & UserPermissionFlag::WatermarkExport) items << "水印";
-    if (permissions & UserPermissionFlag::DateFilter) items << "日期筛选";
+    if (permissions & FilterByDate) items << "日期筛选";
 
     return items.join("、");
 }

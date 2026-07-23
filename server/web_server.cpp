@@ -384,7 +384,7 @@ void WebServer::handleUserInfo(QTcpSocket* socket, const HttpRequest& request) {
     perms["downloadFile"] = user.permissions.testFlag(UserPermissionFlag::DownloadFile);
     perms["batchDownload"] = user.permissions.testFlag(UserPermissionFlag::BatchDownload);
     perms["watermarkExport"] = user.permissions.testFlag(UserPermissionFlag::WatermarkExport);
-    perms["dateFilter"] = user.permissions.testFlag(UserPermissionFlag::DateFilter);
+    perms["dateFilter"] = user.permissions.testFlag(FilterByDate);
     userJson["permissionFlags"] = perms;
 
     nlohmann::json responseJson;

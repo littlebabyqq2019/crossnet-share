@@ -297,7 +297,7 @@ void AddEditUserDialog::setupUi() {
         {UserPermissionFlag::DownloadFile, "下载文件", "下载单个文件到本地"},
         {UserPermissionFlag::BatchDownload, "批量下载", "批量下载多个文件"},
         {UserPermissionFlag::WatermarkExport, "水印导出", "导出带水印的文档"},
-        {UserPermissionFlag::DateFilter, "日期筛选", "按日期范围筛选文件"},
+        {FilterByDate, "日期筛选", "按日期范围筛选文件"},
     };
 
     for (const auto& perm : permissions) {
