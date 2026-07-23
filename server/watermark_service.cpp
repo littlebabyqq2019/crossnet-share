@@ -889,14 +889,27 @@ QList<WatermarkService::KeywordRule> WatermarkService::matchKeywords(const QStri
         return matched;
     }
 
-    // 按检测文本长度降序排序（优先匹配最长的）
+    // 按检测文本长度降序排序（长的优先）
     std::sort(allMatched.begin(), allMatched.end(), [](const KeywordRule& a, const KeywordRule& b) {
         return a.detectText.length() > b.detectText.length();
     });
 
-    // 只保留最长的那个匹配
-    matched.append(allMatched.first());
-    LOG_MESSAGE("Matched keyword (longest): " + allMatched.first().detectText + " -> " + allMatched.first().watermarkText);
+    // 去重：如果一个关键词是另一个已选中关键词的子串，则跳过
+    for (const KeywordRule& rule : allMatched) {
+        bool isSubstring = false;
+        for (const KeywordRule& selectedRule : matched) {
+            if (selectedRule.detectText.contains(rule.detectText) &&
+                selectedRule.detectText != rule.detectText) {
+                isSubstring = true;
+                break;
+            }
+        }
+
+        if (!isSubstring) {
+            matched.append(rule);
+            LOG_MESSAGE("Matched keyword: " + rule.detectText + " -> " + rule.watermarkText);
+        }
+    }
 
     return matched;
 }
