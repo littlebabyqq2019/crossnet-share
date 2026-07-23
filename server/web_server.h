@@ -1,6 +1,5 @@
 #pragma once
 
-#include "user_manager.h"
 #include <QObject>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -14,6 +13,7 @@ class FileIndexer;
 class AuthManager;
 class Server;
 class WatermarkService;
+enum UserPermissionFlag : unsigned int;  // 前向声明枚举类型
 
 struct HttpRequest {
     QString method;         // GET, POST, etc.
