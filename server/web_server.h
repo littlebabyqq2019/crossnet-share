@@ -6,6 +6,7 @@
 #include <QMap>
 #include <QString>
 #include <QByteArray>
+#include "user_manager.h"
 
 namespace CrossNetShare {
 
@@ -13,7 +14,6 @@ class FileIndexer;
 class AuthManager;
 class Server;
 class WatermarkService;
-enum UserPermissionFlag : unsigned int;  // 前向声明枚举类型
 
 struct HttpRequest {
     QString method;         // GET, POST, etc.
