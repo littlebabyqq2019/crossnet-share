@@ -270,7 +270,7 @@ void WebServer::handleRequest(QTcpSocket* socket, const HttpRequest& request) {
     } else if (request.path == "/api/watermark/generate") {
         qDebug() << "[Watermark] Route matched: /api/watermark/generate";
         handleWatermarkGenerate(socket, request);
-    } else if (request.path == "/api/watermark/download") {
+    } else if (request.path.startsWith("/api/watermark/download")) {
         handleWatermarkDownload(socket, request);
     } else {
         HttpResponse response;
@@ -1004,9 +1004,12 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
 void WebServer::handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& request) {
     HttpResponse response;
 
+    qDebug() << "[Watermark Download] Request path:" << request.path;
+
     // 检查认证
     QString username;
     if (!isAuthenticated(request, username)) {
+        qDebug() << "[Watermark Download] Authentication failed";
         response.statusCode = 401;
         response.statusText = "Unauthorized";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
@@ -1020,7 +1023,10 @@ void WebServer::handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& r
     QString sessionId = query.queryItemValue("sessionId");
     QString fileName = query.queryItemValue("fileName");
 
+    qDebug() << "[Watermark Download] sessionId:" << sessionId << "fileName:" << fileName;
+
     if (sessionId.isEmpty() || fileName.isEmpty()) {
+        qDebug() << "[Watermark Download] Missing parameters";
         response.statusCode = 400;
         response.statusText = "Bad Request";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
@@ -1031,6 +1037,7 @@ void WebServer::handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& r
 
     // 查找会话
     if (!watermarkSessions_.contains(sessionId)) {
+        qDebug() << "[Watermark Download] Session not found:" << sessionId;
         response.statusCode = 404;
         response.statusText = "Not Found";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
@@ -1042,9 +1049,12 @@ void WebServer::handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& r
     WatermarkSession session = watermarkSessions_[sessionId];
     QString filePath = session.tempDir + "/" + fileName;
 
+    qDebug() << "[Watermark Download] File path:" << filePath;
+
     // 读取文件
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
+        qDebug() << "[Watermark Download] Failed to open file:" << filePath;
         response.statusCode = 404;
         response.statusText = "Not Found";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
@@ -1055,6 +1065,8 @@ void WebServer::handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& r
 
     QByteArray fileData = file.readAll();
     file.close();
+
+    qDebug() << "[Watermark Download] Sending file, size:" << fileData.size() << "bytes";
 
     // 返回图片文件
     response.statusCode = 200;
@@ -1070,9 +1082,10 @@ void WebServer::handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& r
     if (session.fileNames.isEmpty()) {
         QDir(session.tempDir).removeRecursively();
         watermarkSessions_.remove(sessionId);
-        qDebug() << "[Watermark] Session" << sessionId << "completed and cleaned up";
+        qDebug() << "[Watermark Download] Session" << sessionId << "completed and cleaned up";
     } else {
         watermarkSessions_[sessionId] = session;
+        qDebug() << "[Watermark Download] Remaining files:" << session.fileNames.size();
     }
 }
 
