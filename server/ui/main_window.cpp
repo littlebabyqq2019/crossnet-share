@@ -145,7 +145,7 @@ void MainWindow::onQuitApp() {
 }
 
 void MainWindow::setupUi() {
-    setWindowTitle("CrossNetShare 服务器 v1.1.0");
+    setWindowTitle("CrossNetShare 服务器 v1.2.0");
     resize(980, 800);
 
     // 设置全局字体
@@ -347,8 +347,14 @@ void MainWindow::onClientConnected(const QString& clientId, const QString& addre
         }
     }
 
+    // 清理IPv6映射的IPv4地址格式（::ffff:x.x.x.x -> x.x.x.x）
+    QString cleanAddress = address;
+    if (cleanAddress.startsWith("::ffff:")) {
+        cleanAddress = cleanAddress.mid(7);  // 移除前7个字符 "::ffff:"
+    }
+
     // 添加新条目
-    QString displayText = clientId + " (" + address + ")";
+    QString displayText = clientId + " (" + cleanAddress + ")";
     clientListWidget_->addItem(displayText);
 }
 
