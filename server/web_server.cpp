@@ -993,6 +993,12 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
         response.headers["Content-Type"] = "application/json; charset=utf-8";
         response.body = QJsonDocument(resultObj).toJson(QJsonDocument::Compact);
 
+        qDebug() << "[Watermark] Individual mode response:";
+        qDebug() << "[Watermark]   sessionId:" << sessionId;
+        qDebug() << "[Watermark]   files:" << watermarkResult.generatedFiles;
+        qDebug() << "[Watermark]   tempDir:" << tempDir;
+        qDebug() << "[Watermark]   JSON:" << response.body;
+
         sendResponse(socket, response);
     }
 
