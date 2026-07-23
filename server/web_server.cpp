@@ -1028,10 +1028,12 @@ void WebServer::handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& r
     }
 
     // 解析查询参数
-    QUrlQuery query(request.path.section('?', 1));
-    QString sessionId = query.queryItemValue("sessionId");
-    QString fileName = query.queryItemValue("fileName");
+    QString queryString = request.path.section('?', 1);
+    QUrlQuery query(queryString);
+    QString sessionId = query.queryItemValue("sessionId", QUrl::FullyDecoded);
+    QString fileName = query.queryItemValue("fileName", QUrl::FullyDecoded);
 
+    qDebug() << "[Watermark Download] Query string:" << queryString;
     qDebug() << "[Watermark Download] sessionId:" << sessionId << "fileName:" << fileName;
 
     if (sessionId.isEmpty() || fileName.isEmpty()) {
