@@ -291,13 +291,13 @@ void AddEditUserDialog::setupUi() {
     };
 
     QVector<PermissionItem> permissions = {
-        {ViewFileList, "浏览文件列表", "查看共享文件夹中的文件列表"},
-        {PreviewFile, "预览文件", "在线预览Word、PDF等文档内容"},
-        {PrintFile, "打印", "打印文档（需要预览权限）"},
-        {DownloadFile, "下载文件", "下载单个文件到本地"},
-        {BatchDownload, "批量下载", "批量下载多个文件"},
-        {WatermarkExport, "水印导出", "导出带水印的文档"},
-        {DateFilter, "日期筛选", "按日期范围筛选文件"},
+        {UserPermissionFlag::ViewFileList, "浏览文件列表", "查看共享文件夹中的文件列表"},
+        {UserPermissionFlag::PreviewFile, "预览文件", "在线预览Word、PDF等文档内容"},
+        {UserPermissionFlag::PrintFile, "打印", "打印文档（需要预览权限）"},
+        {UserPermissionFlag::DownloadFile, "下载文件", "下载单个文件到本地"},
+        {UserPermissionFlag::BatchDownload, "批量下载", "批量下载多个文件"},
+        {UserPermissionFlag::WatermarkExport, "水印导出", "导出带水印的文档"},
+        {UserPermissionFlag::DateFilter, "日期筛选", "按日期范围筛选文件"},
     };
 
     for (const auto& perm : permissions) {
@@ -369,7 +369,7 @@ void AddEditUserDialog::updatePermissionCheckboxes(UserPermissions permissions) 
 }
 
 UserPermissions AddEditUserDialog::getPermissions() const {
-    UserPermissions permissions = NoPermission;
+    UserPermissions permissions = UserPermissionFlag::NoPermission;
 
     for (auto it = permissionCheckboxes_.begin(); it != permissionCheckboxes_.end(); ++it) {
         if (it.value()->isChecked()) {

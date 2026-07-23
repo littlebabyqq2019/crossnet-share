@@ -9,7 +9,7 @@
 namespace CrossNetShare {
 
 // 用户权限位标志（细粒度权限控制）
-enum UserPermissionFlag : unsigned int {
+enum class UserPermissionFlag : unsigned int {
     NoPermission      = 0x0000,  // 无权限
     ViewFileList      = 0x0001,  // 浏览文件列表
     PreviewFile       = 0x0002,  // 预览文件
@@ -31,39 +31,39 @@ namespace CrossNetShare {
 
 // 预设权限组合（为了向后兼容和快速设置）
 namespace PermissionPresets {
-    const UserPermissions ReadOnly = ViewFileList | PreviewFile;
-    const UserPermissions Print = ReadOnly | PrintFile;
-    const UserPermissions Download = Print | DownloadFile | BatchDownload | DateFilter;
-    const UserPermissions Full = AllPermissions;
+    const UserPermissions ReadOnly = UserPermissionFlag::ViewFileList | UserPermissionFlag::PreviewFile;
+    const UserPermissions Print = ReadOnly | UserPermissionFlag::PrintFile;
+    const UserPermissions Download = Print | UserPermissionFlag::DownloadFile | UserPermissionFlag::BatchDownload | UserPermissionFlag::DateFilter;
+    const UserPermissions Full = UserPermissionFlag::AllPermissions;
 }
 
 // 权限转字符串（用于显示）
 inline QString permissionFlagToString(UserPermissionFlag flag) {
     switch (flag) {
-        case ViewFileList: return "浏览文件列表";
-        case PreviewFile: return "预览文件";
-        case PrintFile: return "打印";
-        case DownloadFile: return "下载";
-        case BatchDownload: return "批量下载";
-        case WatermarkExport: return "水印导出";
-        case DateFilter: return "日期筛选";
+        case UserPermissionFlag::ViewFileList: return "浏览文件列表";
+        case UserPermissionFlag::PreviewFile: return "预览文件";
+        case UserPermissionFlag::PrintFile: return "打印";
+        case UserPermissionFlag::DownloadFile: return "下载";
+        case UserPermissionFlag::BatchDownload: return "批量下载";
+        case UserPermissionFlag::WatermarkExport: return "水印导出";
+        case UserPermissionFlag::DateFilter: return "日期筛选";
         default: return "未知";
     }
 }
 
 // 权限组合转描述字符串
 inline QString permissionsToString(UserPermissions permissions) {
-    if (permissions == NoPermission) return "无权限";
+    if (permissions == UserPermissionFlag::NoPermission) return "无权限";
     if (permissions == PermissionPresets::Full) return "完整权限";
 
     QStringList items;
-    if (permissions & ViewFileList) items << "浏览";
-    if (permissions & PreviewFile) items << "预览";
-    if (permissions & PrintFile) items << "打印";
-    if (permissions & DownloadFile) items << "下载";
-    if (permissions & BatchDownload) items << "批量下载";
-    if (permissions & WatermarkExport) items << "水印";
-    if (permissions & DateFilter) items << "日期筛选";
+    if (permissions & UserPermissionFlag::ViewFileList) items << "浏览";
+    if (permissions & UserPermissionFlag::PreviewFile) items << "预览";
+    if (permissions & UserPermissionFlag::PrintFile) items << "打印";
+    if (permissions & UserPermissionFlag::DownloadFile) items << "下载";
+    if (permissions & UserPermissionFlag::BatchDownload) items << "批量下载";
+    if (permissions & UserPermissionFlag::WatermarkExport) items << "水印";
+    if (permissions & UserPermissionFlag::DateFilter) items << "日期筛选";
 
     return items.join("、");
 }

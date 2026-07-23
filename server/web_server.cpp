@@ -378,13 +378,13 @@ void WebServer::handleUserInfo(QTcpSocket* socket, const HttpRequest& request) {
 
     // 各个权限项（方便前端使用）
     nlohmann::json perms;
-    perms["viewFileList"] = user.permissions.testFlag(ViewFileList);
-    perms["previewFile"] = user.permissions.testFlag(PreviewFile);
-    perms["printFile"] = user.permissions.testFlag(PrintFile);
-    perms["downloadFile"] = user.permissions.testFlag(DownloadFile);
-    perms["batchDownload"] = user.permissions.testFlag(BatchDownload);
-    perms["watermarkExport"] = user.permissions.testFlag(WatermarkExport);
-    perms["dateFilter"] = user.permissions.testFlag(DateFilter);
+    perms["viewFileList"] = user.permissions.testFlag(UserPermissionFlag::ViewFileList);
+    perms["previewFile"] = user.permissions.testFlag(UserPermissionFlag::PreviewFile);
+    perms["printFile"] = user.permissions.testFlag(UserPermissionFlag::PrintFile);
+    perms["downloadFile"] = user.permissions.testFlag(UserPermissionFlag::DownloadFile);
+    perms["batchDownload"] = user.permissions.testFlag(UserPermissionFlag::BatchDownload);
+    perms["watermarkExport"] = user.permissions.testFlag(UserPermissionFlag::WatermarkExport);
+    perms["dateFilter"] = user.permissions.testFlag(UserPermissionFlag::DateFilter);
     userJson["permissionFlags"] = perms;
 
     nlohmann::json responseJson;
@@ -411,7 +411,7 @@ void WebServer::handleFileList(QTcpSocket* socket, const HttpRequest& request) {
         return;
     }
 
-    if (!hasPermission(username, ViewFileList)) {
+    if (!hasPermission(username, UserPermissionFlag::ViewFileList)) {
         HttpResponse response;
         response.statusCode = 403;
         response.statusText = "Forbidden";
@@ -479,7 +479,7 @@ void WebServer::handleFileDownload(QTcpSocket* socket, const HttpRequest& reques
         return;
     }
 
-    if (!hasPermission(username, DownloadFile)) {
+    if (!hasPermission(username, UserPermissionFlag::DownloadFile)) {
         HttpResponse response;
         response.statusCode = 403;
         response.statusText = "Forbidden";
@@ -552,7 +552,7 @@ void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& reque
         return;
     }
 
-    if (!hasPermission(username, BatchDownload)) {
+    if (!hasPermission(username, UserPermissionFlag::BatchDownload)) {
         HttpResponse response;
         response.statusCode = 403;
         response.statusText = "Forbidden";
@@ -729,7 +729,7 @@ void WebServer::handleFilePreview(QTcpSocket* socket, const HttpRequest& request
         return;
     }
 
-    if (!hasPermission(username, PreviewFile)) {
+    if (!hasPermission(username, UserPermissionFlag::PreviewFile)) {
         HttpResponse response;
         response.statusCode = 403;
         response.statusText = "Forbidden";
@@ -902,7 +902,7 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
     }
 
     // 检查水印导出权限
-    if (!hasPermission(username, WatermarkExport)) {
+    if (!hasPermission(username, UserPermissionFlag::WatermarkExport)) {
         response.statusCode = 403;
         response.statusText = "Forbidden";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
