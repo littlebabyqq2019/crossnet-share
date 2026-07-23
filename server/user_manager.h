@@ -21,7 +21,13 @@ enum UserPermissionFlag {
     AllPermissions    = 0xFFFF   // 所有权限
 };
 Q_DECLARE_FLAGS(UserPermissions, UserPermissionFlag)
-Q_DECLARE_OPERATORS_FOR_FLAGS(UserPermissions)
+
+}  // namespace CrossNetShare
+
+// Q_DECLARE_OPERATORS_FOR_FLAGS 必须在namespace外部声明
+Q_DECLARE_OPERATORS_FOR_FLAGS(CrossNetShare::UserPermissions)
+
+namespace CrossNetShare {
 
 // 预设权限组合（为了向后兼容和快速设置）
 namespace PermissionPresets {
