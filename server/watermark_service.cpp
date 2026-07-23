@@ -14,6 +14,7 @@
 #include <QTemporaryDir>
 #include <QDebug>
 #include <QImageReader>
+#include <algorithm>
 #include <cmath>
 
 #ifdef Q_OS_WIN
@@ -870,6 +871,8 @@ QString WatermarkService::extractSuggestionFromWord(const QString& wordFilePath)
 QList<WatermarkService::KeywordRule> WatermarkService::matchKeywords(const QString& text) {
     QList<KeywordRule> matched;
 
+    // 先收集所有匹配的规则
+    QList<KeywordRule> allMatched;
     for (const KeywordRule& rule : keywords_) {
         if (!rule.enabled) {
             continue;
@@ -877,10 +880,23 @@ QList<WatermarkService::KeywordRule> WatermarkService::matchKeywords(const QStri
 
         // 精确匹配整个短语
         if (text.contains(rule.detectText)) {
-            matched.append(rule);
-            LOG_MESSAGE("Matched keyword: " + rule.detectText + " -> " + rule.watermarkText);
+            allMatched.append(rule);
         }
     }
+
+    // 如果没有匹配，直接返回
+    if (allMatched.isEmpty()) {
+        return matched;
+    }
+
+    // 按检测文本长度降序排序（优先匹配最长的）
+    std::sort(allMatched.begin(), allMatched.end(), [](const KeywordRule& a, const KeywordRule& b) {
+        return a.detectText.length() > b.detectText.length();
+    });
+
+    // 只保留最长的那个匹配
+    matched.append(allMatched.first());
+    LOG_MESSAGE("Matched keyword (longest): " + allMatched.first().detectText + " -> " + allMatched.first().watermarkText);
 
     return matched;
 }
