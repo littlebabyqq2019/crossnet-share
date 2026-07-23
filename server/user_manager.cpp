@@ -186,7 +186,7 @@ UserPermissions UserManager::getUserPermissions(const QString& username) const {
         return users_[index].permissions;
     }
 
-    return UserPermissionFlag::NoPermission;  // 默认无权限
+    return UserPermissions(NoPermission);  // 默认无权限
 }
 
 bool UserManager::hasPermission(const QString& username, UserPermissionFlag permission) const {

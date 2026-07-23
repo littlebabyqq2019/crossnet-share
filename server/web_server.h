@@ -13,7 +13,7 @@ class FileIndexer;
 class AuthManager;
 class Server;
 class WatermarkService;
-enum class UserPermissionFlag : unsigned int;
+enum UserPermissionFlag : unsigned int;  // 前向声明枚举类型
 
 struct HttpRequest {
     QString method;         // GET, POST, etc.

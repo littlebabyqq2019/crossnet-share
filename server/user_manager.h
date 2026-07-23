@@ -9,7 +9,7 @@
 namespace CrossNetShare {
 
 // 用户权限位标志（细粒度权限控制）
-enum class UserPermissionFlag : unsigned int {
+enum UserPermissionFlag : unsigned int {
     NoPermission      = 0x0000,  // 无权限
     ViewFileList      = 0x0001,  // 浏览文件列表
     PreviewFile       = 0x0002,  // 预览文件
@@ -53,7 +53,7 @@ inline QString permissionFlagToString(UserPermissionFlag flag) {
 
 // 权限组合转描述字符串
 inline QString permissionsToString(UserPermissions permissions) {
-    if (permissions == UserPermissionFlag::NoPermission) return "无权限";
+    if (!permissions) return "无权限";  // NoPermission == 0
     if (permissions == PermissionPresets::Full) return "完整权限";
 
     QStringList items;
