@@ -5,6 +5,7 @@
 #include <QMessageBox>
 #include <QLabel>
 #include <QCheckBox>
+#include <QGroupBox>
 #include <QCoreApplication>
 #include <QDebug>
 
@@ -78,7 +79,7 @@ void UserManagementDialog::loadUsers() {
         userTable_->insertRow(row);
 
         userTable_->setItem(row, 0, new QTableWidgetItem(user.username));
-        userTable_->setItem(row, 1, new QTableWidgetItem(permissionToString(user.permission)));
+        userTable_->setItem(row, 1, new QTableWidgetItem(permissionsToString(user.permissions)));
         userTable_->setItem(row, 2, new QTableWidgetItem(user.isAdmin ? "是" : "否"));
         userTable_->setItem(row, 3, new QTableWidgetItem(user.isActive ? "启用" : "禁用"));
         userTable_->setItem(row, 4, new QTableWidgetItem(user.createdAt.toString("yyyy-MM-dd HH:mm")));
@@ -91,9 +92,9 @@ void UserManagementDialog::onAddUser() {
         QString username = dialog.getUsername();
         QString password = dialog.getPassword();
         bool isAdmin = dialog.isAdmin();
-        UserPermission permission = dialog.getPermission();
+        UserPermissions permissions = dialog.getPermissions();
 
-        if (UserManager::instance()->addUser(username, password, isAdmin, permission)) {
+        if (UserManager::instance()->addUser(username, password, isAdmin, permissions)) {
             // 保存到文件
             QString configFile = QCoreApplication::applicationDirPath() + "/users.json";
             qDebug() << "[UserManagement] About to save to:" << configFile;
@@ -127,8 +128,8 @@ void UserManagementDialog::onEditUser() {
     AddEditUserDialog dialog(this, &user);
     if (dialog.exec() == QDialog::Accepted) {
         // 更新权限
-        UserPermission permission = dialog.getPermission();
-        UserManager::instance()->setPermission(username, permission);
+        UserPermissions permissions = dialog.getPermissions();
+        UserManager::instance()->setPermissions(username, permissions);
 
         // 更新管理员状态
         bool isAdmin = dialog.isAdmin();
@@ -217,13 +218,14 @@ void UserManagementDialog::updateButtonStates() {
 AddEditUserDialog::AddEditUserDialog(QWidget* parent, const User* user)
     : QDialog(parent)
     , editingUser_(user)
+    , updatingCheckboxes_(false)
 {
     setupUi();
 }
 
 void AddEditUserDialog::setupUi() {
     setWindowTitle(editingUser_ ? "编辑用户" : "添加用户");
-    resize(400, 300);
+    resize(500, 600);
 
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
 
@@ -249,22 +251,6 @@ void AddEditUserDialog::setupUi() {
     passwordLayout->addWidget(passwordEdit_);
     mainLayout->addLayout(passwordLayout);
 
-    // 权限级别
-    QHBoxLayout* permissionLayout = new QHBoxLayout();
-    permissionLayout->addWidget(new QLabel("权限级别:", this));
-    permissionCombo_ = new QComboBox(this);
-    permissionCombo_->addItem("只读（仅预览）", static_cast<int>(UserPermission::ReadOnly));
-    permissionCombo_->addItem("打印（预览+打印）", static_cast<int>(UserPermission::Print));
-    permissionCombo_->addItem("下载（完整功能）", static_cast<int>(UserPermission::Download));
-
-    if (editingUser_) {
-        permissionCombo_->setCurrentIndex(static_cast<int>(editingUser_->permission));
-    } else {
-        permissionCombo_->setCurrentIndex(2);  // 默认下载权限
-    }
-    permissionLayout->addWidget(permissionCombo_);
-    mainLayout->addLayout(permissionLayout);
-
     // 管理员
     adminCheckBox_ = new QCheckBox("管理员", this);
     if (editingUser_) {
@@ -274,6 +260,64 @@ void AddEditUserDialog::setupUi() {
         }
     }
     mainLayout->addWidget(adminCheckBox_);
+
+    mainLayout->addSpacing(10);
+
+    // 预设权限快速选择
+    QHBoxLayout* presetLayout = new QHBoxLayout();
+    presetLayout->addWidget(new QLabel("权限预设:", this));
+    presetCombo_ = new QComboBox(this);
+    presetCombo_->addItem("自定义", -1);
+    presetCombo_->addItem("只读（浏览+预览）", static_cast<int>(PermissionPresets::ReadOnly));
+    presetCombo_->addItem("打印（只读+打印）", static_cast<int>(PermissionPresets::Print));
+    presetCombo_->addItem("下载（打印+下载+批量+日期筛选）", static_cast<int>(PermissionPresets::Download));
+    presetCombo_->addItem("完整权限（所有功能）", static_cast<int>(PermissionPresets::Full));
+    presetCombo_->setCurrentIndex(0);  // 默认自定义
+    connect(presetCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &AddEditUserDialog::onPresetSelected);
+    presetLayout->addWidget(presetCombo_);
+    presetLayout->addStretch();
+    mainLayout->addLayout(presetLayout);
+
+    // 细粒度权限复选框
+    QGroupBox* permissionGroup = new QGroupBox("详细权限（可单独勾选）", this);
+    QVBoxLayout* permissionLayout = new QVBoxLayout(permissionGroup);
+
+    // 创建权限复选框
+    struct PermissionItem {
+        UserPermissionFlag flag;
+        QString label;
+        QString tooltip;
+    };
+
+    QVector<PermissionItem> permissions = {
+        {ViewFileList, "浏览文件列表", "查看共享文件夹中的文件列表"},
+        {PreviewFile, "预览文件", "在线预览Word、PDF等文档内容"},
+        {PrintFile, "打印", "打印文档（需要预览权限）"},
+        {DownloadFile, "下载文件", "下载单个文件到本地"},
+        {BatchDownload, "批量下载", "批量下载多个文件"},
+        {WatermarkExport, "水印导出", "导出带水印的文档"},
+        {DateFilter, "日期筛选", "按日期范围筛选文件"},
+    };
+
+    for (const auto& perm : permissions) {
+        QCheckBox* checkbox = new QCheckBox(perm.label, permissionGroup);
+        checkbox->setToolTip(perm.tooltip);
+        connect(checkbox, &QCheckBox::stateChanged,
+                this, &AddEditUserDialog::onPermissionChanged);
+        permissionCheckboxes_[perm.flag] = checkbox;
+        permissionLayout->addWidget(checkbox);
+    }
+
+    mainLayout->addWidget(permissionGroup);
+
+    // 初始化权限状态
+    if (editingUser_) {
+        updatePermissionCheckboxes(editingUser_->permissions);
+    } else {
+        updatePermissionCheckboxes(PermissionPresets::Download);  // 默认下载权限
+        presetCombo_->setCurrentIndex(3);  // 对应"下载"预设
+    }
 
     mainLayout->addStretch();
 
@@ -292,8 +336,48 @@ void AddEditUserDialog::setupUi() {
     mainLayout->addLayout(buttonLayout);
 }
 
-UserPermission AddEditUserDialog::getPermission() const {
-    return static_cast<UserPermission>(permissionCombo_->currentData().toInt());
+void AddEditUserDialog::onPresetSelected(int index) {
+    if (updatingCheckboxes_) return;
+
+    int presetValue = presetCombo_->currentData().toInt();
+    if (presetValue == -1) {
+        // 自定义，不改变复选框状态
+        return;
+    }
+
+    UserPermissions preset = UserPermissions(presetValue);
+    updatePermissionCheckboxes(preset);
+}
+
+void AddEditUserDialog::onPermissionChanged() {
+    if (updatingCheckboxes_) return;
+
+    // 用户手动修改了复选框，设置为自定义
+    updatingCheckboxes_ = true;
+    presetCombo_->setCurrentIndex(0);  // 切换到"自定义"
+    updatingCheckboxes_ = false;
+}
+
+void AddEditUserDialog::updatePermissionCheckboxes(UserPermissions permissions) {
+    updatingCheckboxes_ = true;
+
+    for (auto it = permissionCheckboxes_.begin(); it != permissionCheckboxes_.end(); ++it) {
+        it.value()->setChecked(permissions.testFlag(it.key()));
+    }
+
+    updatingCheckboxes_ = false;
+}
+
+UserPermissions AddEditUserDialog::getPermissions() const {
+    UserPermissions permissions = NoPermission;
+
+    for (auto it = permissionCheckboxes_.begin(); it != permissionCheckboxes_.end(); ++it) {
+        if (it.value()->isChecked()) {
+            permissions |= it.key();
+        }
+    }
+
+    return permissions;
 }
 
 }

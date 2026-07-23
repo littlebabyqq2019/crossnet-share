@@ -18,7 +18,7 @@ UserManager::UserManager() {
     defaultAdmin.passwordHash = hashPassword("admin123");
     defaultAdmin.isAdmin = true;
     defaultAdmin.isActive = true;
-    defaultAdmin.permission = UserPermission::Download;  // 管理员默认完整权限
+    defaultAdmin.permissions = PermissionPresets::Full;  // 管理员默认完整权限
     defaultAdmin.createdAt = QDateTime::currentDateTime();
     users_.append(defaultAdmin);
 }
@@ -44,7 +44,7 @@ int UserManager::findUserIndex(const QString& username) const {
     return -1;
 }
 
-bool UserManager::addUser(const QString& username, const QString& password, bool isAdmin, UserPermission permission) {
+bool UserManager::addUser(const QString& username, const QString& password, bool isAdmin, UserPermissions permissions) {
     QMutexLocker locker(&mutex_);
 
     qDebug() << "[UserManager] addUser called - username:" << username << "isAdmin:" << isAdmin;
@@ -64,7 +64,7 @@ bool UserManager::addUser(const QString& username, const QString& password, bool
     user.passwordHash = hashPassword(password);
     user.isAdmin = isAdmin;
     user.isActive = true;
-    user.permission = permission;
+    user.permissions = permissions;
     user.createdAt = QDateTime::currentDateTime();
 
     users_.append(user);
@@ -139,7 +139,7 @@ bool UserManager::setActive(const QString& username, bool isActive) {
     return true;
 }
 
-bool UserManager::setPermission(const QString& username, UserPermission permission) {
+bool UserManager::setPermissions(const QString& username, UserPermissions permissions) {
     QMutexLocker locker(&mutex_);
 
     int index = findUserIndex(username);
@@ -147,7 +147,7 @@ bool UserManager::setPermission(const QString& username, UserPermission permissi
         return false;
     }
 
-    users_[index].permission = permission;
+    users_[index].permissions = permissions;
     return true;
 }
 
@@ -178,15 +178,20 @@ User UserManager::getUser(const QString& username) const {
     return User();
 }
 
-UserPermission UserManager::getUserPermission(const QString& username) const {
+UserPermissions UserManager::getUserPermissions(const QString& username) const {
     QMutexLocker locker(&mutex_);
 
     int index = findUserIndex(username);
     if (index >= 0) {
-        return users_[index].permission;
+        return users_[index].permissions;
     }
 
-    return UserPermission::ReadOnly;  // 默认最低权限
+    return NoPermission;  // 默认无权限
+}
+
+bool UserManager::hasPermission(const QString& username, UserPermissionFlag permission) const {
+    UserPermissions permissions = getUserPermissions(username);
+    return permissions.testFlag(permission);
 }
 
 QVector<User> UserManager::getAllUsers() const {
@@ -224,9 +229,24 @@ bool UserManager::loadFromFile(const QString& filePath) {
         user.isActive = userObj["isActive"].toBool(true);
         user.createdAt = QDateTime::fromString(userObj["createdAt"].toString(), Qt::ISODate);
 
-        // 加载权限，默认为下载权限以兼容旧数据
-        QString permStr = userObj["permission"].toString("Download");
-        user.permission = stringToPermission(permStr);
+        // 加载权限位标志
+        if (userObj.contains("permissions")) {
+            // 新格式：直接读取权限位
+            user.permissions = UserPermissions(userObj["permissions"].toInt());
+        } else if (userObj.contains("permission")) {
+            // 旧格式：从枚举转换为位标志（向后兼容）
+            QString permStr = userObj["permission"].toString("Download");
+            if (permStr == "只读" || permStr == "ReadOnly") {
+                user.permissions = PermissionPresets::ReadOnly;
+            } else if (permStr == "打印" || permStr == "Print") {
+                user.permissions = PermissionPresets::Print;
+            } else {
+                user.permissions = PermissionPresets::Download;
+            }
+        } else {
+            // 默认下载权限
+            user.permissions = PermissionPresets::Download;
+        }
 
         users_.append(user);
     }
@@ -238,7 +258,7 @@ bool UserManager::loadFromFile(const QString& filePath) {
         defaultAdmin.passwordHash = hashPassword("admin123");
         defaultAdmin.isAdmin = true;
         defaultAdmin.isActive = true;
-        defaultAdmin.permission = UserPermission::Download;
+        defaultAdmin.permissions = PermissionPresets::Full;
         defaultAdmin.createdAt = QDateTime::currentDateTime();
         users_.append(defaultAdmin);
     }
@@ -261,10 +281,13 @@ bool UserManager::saveToFile(const QString& filePath) {
         userObj["isAdmin"] = user.isAdmin;
         userObj["isActive"] = user.isActive;
         userObj["createdAt"] = user.createdAt.toString(Qt::ISODate);
-        userObj["permission"] = permissionToString(user.permission);
+        userObj["permissions"] = static_cast<int>(user.permissions);  // 保存权限位标志
 
         usersArray.append(userObj);
-        qDebug() << "[UserManager]   User:" << user.username << "| Admin:" << user.isAdmin << "| Active:" << user.isActive;
+        qDebug() << "[UserManager]   User:" << user.username
+                 << "| Admin:" << user.isAdmin
+                 << "| Active:" << user.isActive
+                 << "| Permissions:" << permissionsToString(user.permissions);
     }
 
     QJsonObject root;

@@ -7,6 +7,8 @@
 #include <QLineEdit>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QGroupBox>
+#include <QMap>
 
 namespace CrossNetShare {
 
@@ -45,19 +47,31 @@ public:
     QString getUsername() const { return usernameEdit_->text(); }
     QString getPassword() const { return passwordEdit_->text(); }
     bool isAdmin() const { return adminCheckBox_->isChecked(); }
-    UserPermission getPermission() const;
+    UserPermissions getPermissions() const;
+
+private slots:
+    void onPresetSelected(int index);
+    void onPermissionChanged();
 
 private:
     void setupUi();
+    void updatePermissionCheckboxes(UserPermissions permissions);
 
     QLineEdit* usernameEdit_;
     QLineEdit* passwordEdit_;
     QCheckBox* adminCheckBox_;
-    QComboBox* permissionCombo_;
+
+    // 预设权限快速选择
+    QComboBox* presetCombo_;
+
+    // 细粒度权限复选框
+    QMap<UserPermissionFlag, QCheckBox*> permissionCheckboxes_;
+
     QPushButton* okButton_;
     QPushButton* cancelButton_;
 
     const User* editingUser_;
+    bool updatingCheckboxes_;  // 防止递归更新
 };
 
 }

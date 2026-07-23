@@ -4,32 +4,62 @@
 #include <QDateTime>
 #include <QVector>
 #include <QMutex>
+#include <QFlags>
 
 namespace CrossNetShare {
 
-// 用户权限级别
-enum class UserPermission {
-    ReadOnly = 0,   // 只读：仅查看文件列表和预览
-    Print = 1,      // 打印：预览 + 打印
-    Download = 2    // 下载：完整功能（预览、打印、下载）
+// 用户权限位标志（细粒度权限控制）
+enum UserPermissionFlag {
+    NoPermission      = 0x0000,  // 无权限
+    ViewFileList      = 0x0001,  // 浏览文件列表
+    PreviewFile       = 0x0002,  // 预览文件
+    PrintFile         = 0x0004,  // 打印文件
+    DownloadFile      = 0x0008,  // 下载单个文件
+    BatchDownload     = 0x0010,  // 批量下载
+    WatermarkExport   = 0x0020,  // 水印导出
+    DateFilter        = 0x0040,  // 日期筛选
+    AllPermissions    = 0xFFFF   // 所有权限
 };
+Q_DECLARE_FLAGS(UserPermissions, UserPermissionFlag)
+Q_DECLARE_OPERATORS_FOR_FLAGS(UserPermissions)
 
-// 权限枚举转字符串
-inline QString permissionToString(UserPermission permission) {
-    switch (permission) {
-        case UserPermission::ReadOnly: return "只读";
-        case UserPermission::Print: return "打印";
-        case UserPermission::Download: return "下载";
+// 预设权限组合（为了向后兼容和快速设置）
+namespace PermissionPresets {
+    const UserPermissions ReadOnly = ViewFileList | PreviewFile;
+    const UserPermissions Print = ReadOnly | PrintFile;
+    const UserPermissions Download = Print | DownloadFile | BatchDownload | DateFilter;
+    const UserPermissions Full = AllPermissions;
+}
+
+// 权限转字符串（用于显示）
+inline QString permissionFlagToString(UserPermissionFlag flag) {
+    switch (flag) {
+        case ViewFileList: return "浏览文件列表";
+        case PreviewFile: return "预览文件";
+        case PrintFile: return "打印";
+        case DownloadFile: return "下载";
+        case BatchDownload: return "批量下载";
+        case WatermarkExport: return "水印导出";
+        case DateFilter: return "日期筛选";
         default: return "未知";
     }
 }
 
-// 字符串转权限枚举
-inline UserPermission stringToPermission(const QString& str) {
-    if (str == "只读" || str == "ReadOnly") return UserPermission::ReadOnly;
-    if (str == "打印" || str == "Print") return UserPermission::Print;
-    if (str == "下载" || str == "Download") return UserPermission::Download;
-    return UserPermission::ReadOnly;  // 默认最低权限
+// 权限组合转描述字符串
+inline QString permissionsToString(UserPermissions permissions) {
+    if (permissions == NoPermission) return "无权限";
+    if (permissions == PermissionPresets::Full) return "完整权限";
+
+    QStringList items;
+    if (permissions & ViewFileList) items << "浏览";
+    if (permissions & PreviewFile) items << "预览";
+    if (permissions & PrintFile) items << "打印";
+    if (permissions & DownloadFile) items << "下载";
+    if (permissions & BatchDownload) items << "批量下载";
+    if (permissions & WatermarkExport) items << "水印";
+    if (permissions & DateFilter) items << "日期筛选";
+
+    return items.join("、");
 }
 
 struct User {
@@ -38,25 +68,26 @@ struct User {
     QDateTime createdAt;
     bool isAdmin;
     bool isActive;
-    UserPermission permission;  // 用户权限级别
+    UserPermissions permissions;  // 用户权限位标志
 
-    User() : isAdmin(false), isActive(true), permission(UserPermission::Download) {}
+    User() : isAdmin(false), isActive(true), permissions(PermissionPresets::Download) {}
 };
 
 class UserManager {
 public:
     static UserManager* instance();
 
-    bool addUser(const QString& username, const QString& password, bool isAdmin = false, UserPermission permission = UserPermission::Download);
+    bool addUser(const QString& username, const QString& password, bool isAdmin = false, UserPermissions permissions = PermissionPresets::Download);
     bool removeUser(const QString& username);
     bool updatePassword(const QString& username, const QString& newPassword);
     bool setAdmin(const QString& username, bool isAdmin);
     bool setActive(const QString& username, bool isActive);
-    bool setPermission(const QString& username, UserPermission permission);
+    bool setPermissions(const QString& username, UserPermissions permissions);
 
     bool authenticate(const QString& username, const QString& password);
     User getUser(const QString& username) const;
-    UserPermission getUserPermission(const QString& username) const;
+    UserPermissions getUserPermissions(const QString& username) const;
+    bool hasPermission(const QString& username, UserPermissionFlag permission) const;
     QVector<User> getAllUsers() const;
 
     bool loadFromFile(const QString& filePath);
