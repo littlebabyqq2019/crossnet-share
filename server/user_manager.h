@@ -9,7 +9,7 @@
 namespace CrossNetShare {
 
 // 用户权限位标志（细粒度权限控制）
-enum UserPermissionFlag {
+enum UserPermissionFlag : unsigned int {
     NoPermission      = 0x0000,  // 无权限
     ViewFileList      = 0x0001,  // 浏览文件列表
     PreviewFile       = 0x0002,  // 预览文件
