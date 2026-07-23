@@ -24,6 +24,7 @@ public:
         bool enableUnified;     // 启用统一水印
         QString unifiedText;    // 统一水印文字
         bool enabled;           // 全局启用水印功能
+        bool zipDownload;       // 打包下载（true=ZIP, false=逐个下载）
 
         WatermarkConfig()
             : fontSize(14)
@@ -33,6 +34,7 @@ public:
             , density("medium")
             , enableUnified(false)
             , enabled(false)
+            , zipDownload(true)     // 默认打包下载
         {}
     };
 

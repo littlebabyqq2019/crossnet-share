@@ -19,6 +19,7 @@
 #include <QTextStream>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QUrlQuery>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -269,6 +270,8 @@ void WebServer::handleRequest(QTcpSocket* socket, const HttpRequest& request) {
     } else if (request.path == "/api/watermark/generate") {
         qDebug() << "[Watermark] Route matched: /api/watermark/generate";
         handleWatermarkGenerate(socket, request);
+    } else if (request.path == "/api/watermark/download") {
+        handleWatermarkDownload(socket, request);
     } else {
         HttpResponse response;
         response.statusCode = 404;
@@ -933,49 +936,144 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
         return;
     }
 
-    // 读取生成的 ZIP 文件（或单个图片文件）
-    qDebug() << "[Watermark] Attempting to open file:" << watermarkResult.zipFilePath;
-    QFileInfo fileInfo(watermarkResult.zipFilePath);
-    QString extension = fileInfo.suffix().toLower();
+    // 读取生成的 ZIP 文件（或返回图片列表）
+    qDebug() << "[Watermark] Processing result, zipFilePath:" << watermarkResult.zipFilePath;
 
-    QFile file(watermarkResult.zipFilePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        qDebug() << "[Watermark] ERROR: Failed to open file!";
-        response.statusCode = 500;
-        response.statusText = "Internal Server Error";
-        response.headers["Content-Type"] = "application/json; charset=utf-8";
-        response.body = R"({"success":false,"error":"无法读取生成的文件"})";
-        sendResponse(socket, response);
+    // 检查是否使用ZIP模式
+    if (!watermarkResult.zipFilePath.isEmpty()) {
+        // ZIP模式：返回ZIP文件
+        QFile file(watermarkResult.zipFilePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            qDebug() << "[Watermark] ERROR: Failed to open ZIP file!";
+            response.statusCode = 500;
+            response.statusText = "Internal Server Error";
+            response.headers["Content-Type"] = "application/json; charset=utf-8";
+            response.body = R"({"success":false,"error":"无法读取生成的ZIP文件"})";
+            sendResponse(socket, response);
+            QDir(tempDir).removeRecursively();
+            return;
+        }
+
+        qDebug() << "[Watermark] Successfully opened ZIP file";
+        QByteArray fileData = file.readAll();
+        file.close();
+        qDebug() << "[Watermark] Read" << fileData.size() << "bytes from ZIP file";
+
+        // 清理临时目录
         QDir(tempDir).removeRecursively();
-        return;
-    }
 
-    qDebug() << "[Watermark] Successfully opened file";
-    QByteArray fileData = file.readAll();
-    file.close();
-    qDebug() << "[Watermark] Read" << fileData.size() << "bytes from file";
-
-    // 清理临时目录
-    QDir(tempDir).removeRecursively();
-
-    // 返回文件（ZIP 或单个图片）
-    response.statusCode = 200;
-    response.statusText = "OK";
-    if (extension == "zip") {
+        // 返回ZIP文件
+        response.statusCode = 200;
+        response.statusText = "OK";
         response.headers["Content-Type"] = "application/zip";
+        QFileInfo fileInfo(watermarkResult.zipFilePath);
         response.headers["Content-Disposition"] = "attachment; filename=\"" + fileInfo.fileName().toUtf8() + "\"";
-    } else {
-        // 单个图片文件
-        response.headers["Content-Type"] = "image/jpeg";
-        response.headers["Content-Disposition"] = "attachment; filename=\"" + fileInfo.fileName().toUtf8() + "\"";
-    }
-    response.body = fileData;
+        response.body = fileData;
 
-    sendResponse(socket, response);
+        sendResponse(socket, response);
+    } else {
+        // 非ZIP模式：返回图片文件列表和会话ID
+        // 将临时目录和文件列表存储起来，供后续下载使用
+        QString sessionId = QString::number(QDateTime::currentMSecsSinceEpoch());
+        watermarkSessions_[sessionId] = {tempDir, watermarkResult.generatedFiles};
+
+        QJsonObject resultObj;
+        resultObj["success"] = true;
+        resultObj["mode"] = "individual";
+        resultObj["sessionId"] = sessionId;
+
+        QJsonArray filesArray;
+        for (const QString& fileName : watermarkResult.generatedFiles) {
+            filesArray.append(fileName);
+        }
+        resultObj["files"] = filesArray;
+
+        response.statusCode = 200;
+        response.statusText = "OK";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = QJsonDocument(resultObj).toJson(QJsonDocument::Compact);
+
+        sendResponse(socket, response);
+    }
 
     // 记录审计日志
     emit logMessage(QString("[Watermark] User '%1' generated watermark for '%2' (%3 files)")
         .arg(username, filePath, QString::number(watermarkResult.generatedFiles.size())));
+}
+
+void WebServer::handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& request) {
+    HttpResponse response;
+
+    // 检查认证
+    QString username;
+    if (!isAuthenticated(request, username)) {
+        response.statusCode = 401;
+        response.statusText = "Unauthorized";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = R"({"success":false,"error":"未登录"})";
+        sendResponse(socket, response);
+        return;
+    }
+
+    // 解析查询参数
+    QUrlQuery query(request.path.section('?', 1));
+    QString sessionId = query.queryItemValue("sessionId");
+    QString fileName = query.queryItemValue("fileName");
+
+    if (sessionId.isEmpty() || fileName.isEmpty()) {
+        response.statusCode = 400;
+        response.statusText = "Bad Request";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = R"({"success":false,"error":"缺少sessionId或fileName参数"})";
+        sendResponse(socket, response);
+        return;
+    }
+
+    // 查找会话
+    if (!watermarkSessions_.contains(sessionId)) {
+        response.statusCode = 404;
+        response.statusText = "Not Found";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = R"({"success":false,"error":"会话不存在或已过期"})";
+        sendResponse(socket, response);
+        return;
+    }
+
+    WatermarkSession session = watermarkSessions_[sessionId];
+    QString filePath = session.tempDir + "/" + fileName;
+
+    // 读取文件
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        response.statusCode = 404;
+        response.statusText = "Not Found";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = R"({"success":false,"error":"文件不存在"})";
+        sendResponse(socket, response);
+        return;
+    }
+
+    QByteArray fileData = file.readAll();
+    file.close();
+
+    // 返回图片文件
+    response.statusCode = 200;
+    response.statusText = "OK";
+    response.headers["Content-Type"] = "image/jpeg";
+    response.headers["Content-Disposition"] = "attachment; filename=\"" + fileName.toUtf8() + "\"";
+    response.body = fileData;
+
+    sendResponse(socket, response);
+
+    // 检查是否所有文件都已下载，如果是则清理会话
+    session.fileNames.removeOne(fileName);
+    if (session.fileNames.isEmpty()) {
+        QDir(session.tempDir).removeRecursively();
+        watermarkSessions_.remove(sessionId);
+        qDebug() << "[Watermark] Session" << sessionId << "completed and cleaned up";
+    } else {
+        watermarkSessions_[sessionId] = session;
+    }
 }
 
 }

@@ -88,6 +88,7 @@ private:
     QSlider* rotationSlider_;
     QLabel* rotationLabel_;
     QComboBox* densityComboBox_;
+    QCheckBox* zipDownloadCheckBox_;
     QColor currentColor_;
 };
 

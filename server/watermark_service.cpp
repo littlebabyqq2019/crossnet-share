@@ -116,6 +116,7 @@ bool WatermarkService::loadConfig(const QString& configPath) {
         config_.enableUnified = style["enableUnified"].toBool(false);
         config_.unifiedText = style["unifiedText"].toString("");
         config_.enabled = style["enabled"].toBool(false);
+        config_.zipDownload = style["zipDownload"].toBool(true);  // 默认打包下载
     }
 
     // 加载关键词
@@ -158,6 +159,7 @@ bool WatermarkService::saveConfig(const QString& configPath) {
     style["enableUnified"] = config_.enableUnified;
     style["unifiedText"] = config_.unifiedText;
     style["enabled"] = config_.enabled;
+    style["zipDownload"] = config_.zipDownload;
     root["watermarkStyle"] = style;
 
     // 保存关键词
@@ -373,23 +375,32 @@ WatermarkService::WatermarkResult WatermarkService::generateWatermarkedImages(
         return result;
     }
 
-    // 6. 打包为 ZIP
-    LOG_MESSAGE("Creating ZIP file for " + QString::number(generatedImages.size()) + " images...");
-    result.zipFilePath = createZipFile(generatedImages, outputDir, baseName + "_水印图片");
-    LOG_MESSAGE("ZIP file path: " + result.zipFilePath);
-    LOG_MESSAGE("ZIP file exists: " + QString(QFile::exists(result.zipFilePath) ? "Yes" : "No"));
-    if (QFile::exists(result.zipFilePath)) {
-        QFileInfo zipInfo(result.zipFilePath);
-        LOG_MESSAGE("ZIP file size: " + QString::number(zipInfo.size()) + " bytes");
+    // 6. 根据配置决定是否打包为 ZIP
+    if (config_.zipDownload) {
+        LOG_MESSAGE("Creating ZIP file for " + QString::number(generatedImages.size()) + " images...");
+        result.zipFilePath = createZipFile(generatedImages, outputDir, baseName + "_水印图片");
+        LOG_MESSAGE("ZIP file path: " + result.zipFilePath);
+        LOG_MESSAGE("ZIP file exists: " + QString(QFile::exists(result.zipFilePath) ? "Yes" : "No"));
+        if (QFile::exists(result.zipFilePath)) {
+            QFileInfo zipInfo(result.zipFilePath);
+            LOG_MESSAGE("ZIP file size: " + QString::number(zipInfo.size()) + " bytes");
+        }
+    } else {
+        LOG_MESSAGE("Zip download disabled, images will be downloaded individually");
+        // 不打包，直接返回图片路径列表
+        result.zipFilePath = "";  // 空字符串表示不使用ZIP
     }
 
     // 7. 清理临时文件
     QFile::remove(pdfPath);
     QFile::remove(baseImagePath);
-    for (const QString& imagePath : generatedImages) {
-        // ZIP 创建后删除临时图片文件
-        // QFile::remove(imagePath);  // 暂时保留，方便调试
+    if (config_.zipDownload) {
+        // ZIP模式：打包后删除临时图片
+        for (const QString& imagePath : generatedImages) {
+            // QFile::remove(imagePath);  // 暂时保留，方便调试
+        }
     }
+    // 非ZIP模式：保留图片文件供下载
 
     result.success = true;
     emit progress("完成！", 5, 5);

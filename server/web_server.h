@@ -75,6 +75,7 @@ private:
     void handleBatchDownload(QTcpSocket* socket, const HttpRequest& request);
     void handleFilePreview(QTcpSocket* socket, const HttpRequest& request);
     void handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& request);
+    void handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& request);
 
     // Static file serving
     void serveStaticFile(QTcpSocket* socket, const QString& path);
@@ -95,6 +96,13 @@ private:
     quint16 port_;
 
     QMap<QTcpSocket*, QByteArray> socketBuffers_;
+
+    // 水印会话存储（sessionId -> {tempDir, fileList}）
+    struct WatermarkSession {
+        QString tempDir;
+        QStringList fileNames;
+    };
+    QMap<QString, WatermarkSession> watermarkSessions_;
 };
 
 }

@@ -257,6 +257,16 @@ void SettingsDialog::setupUi() {
 
     watermarkLayout->addWidget(styleGroup);
 
+    // 下载选项
+    QGroupBox* downloadGroup = new QGroupBox("下载选项");
+    QVBoxLayout* downloadLayout = new QVBoxLayout(downloadGroup);
+
+    zipDownloadCheckBox_ = new QCheckBox("打包下载（取消勾选则逐个下载图片）");
+    zipDownloadCheckBox_->setChecked(true);
+    downloadLayout->addWidget(zipDownloadCheckBox_);
+
+    watermarkLayout->addWidget(downloadGroup);
+
     watermarkLayout->addStretch();
     tabWidget_->addTab(watermarkTab, "水印设置");
 
@@ -434,6 +444,7 @@ void SettingsDialog::loadWatermarkSettings() {
     updateColorButton();
     opacitySlider_->setValue(config.opacity);
     rotationSlider_->setValue(config.rotation);
+    zipDownloadCheckBox_->setChecked(config.zipDownload);
 
     int densityIndex = 1; // medium
     if (config.density == "sparse") densityIndex = 0;
@@ -454,6 +465,7 @@ void SettingsDialog::saveWatermarkSettings() {
     config.color = currentColor_;
     config.opacity = opacitySlider_->value();
     config.rotation = rotationSlider_->value();
+    config.zipDownload = zipDownloadCheckBox_->isChecked();
 
     QStringList densities = {"sparse", "medium", "dense"};
     config.density = densities[densityComboBox_->currentIndex()];
