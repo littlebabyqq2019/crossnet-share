@@ -85,6 +85,7 @@ private:
     // Helper functions
     QString getMimeType(const QString& filename);
     bool isAuthenticated(const HttpRequest& request, QString& username);
+    bool hasPermission(const QString& username, UserPermissionFlag permission);
     QByteArray buildHttpResponse(const HttpResponse& response);
 
     QTcpServer* tcpServer_;

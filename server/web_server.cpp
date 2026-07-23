@@ -373,8 +373,19 @@ void WebServer::handleUserInfo(QTcpSocket* socket, const HttpRequest& request) {
     nlohmann::json userJson;
     userJson["username"] = username.toStdString();
     userJson["isAdmin"] = user.isAdmin;
-    userJson["permission"] = permissionToString(user.permission).toStdString();
-    userJson["permissionLevel"] = static_cast<int>(user.permission);
+    userJson["permissions"] = static_cast<int>(user.permissions);  // 权限位标志
+    userJson["permissionsText"] = permissionsToString(user.permissions).toStdString();
+
+    // 各个权限项（方便前端使用）
+    nlohmann::json perms;
+    perms["viewFileList"] = user.permissions.testFlag(ViewFileList);
+    perms["previewFile"] = user.permissions.testFlag(PreviewFile);
+    perms["printFile"] = user.permissions.testFlag(PrintFile);
+    perms["downloadFile"] = user.permissions.testFlag(DownloadFile);
+    perms["batchDownload"] = user.permissions.testFlag(BatchDownload);
+    perms["watermarkExport"] = user.permissions.testFlag(WatermarkExport);
+    perms["dateFilter"] = user.permissions.testFlag(DateFilter);
+    userJson["permissionFlags"] = perms;
 
     nlohmann::json responseJson;
     responseJson["success"] = true;
@@ -388,7 +399,28 @@ void WebServer::handleUserInfo(QTcpSocket* socket, const HttpRequest& request) {
 }
 
 void WebServer::handleFileList(QTcpSocket* socket, const HttpRequest& request) {
-    Q_UNUSED(request)
+    // 检查认证和权限
+    QString username;
+    if (!isAuthenticated(request, username)) {
+        HttpResponse response;
+        response.statusCode = 401;
+        response.statusText = "Unauthorized";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = jsonResponse({{"success", false}, {"error", "未登录"}});
+        sendResponse(socket, response);
+        return;
+    }
+
+    if (!hasPermission(username, ViewFileList)) {
+        HttpResponse response;
+        response.statusCode = 403;
+        response.statusText = "Forbidden";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = jsonResponse({{"success", false}, {"error", "无权限浏览文件列表"}});
+        sendResponse(socket, response);
+        return;
+    }
+
     std::vector<FileMetadata> files = indexer_->getAllFiles();
 
     nlohmann::json root;
@@ -447,6 +479,16 @@ void WebServer::handleFileDownload(QTcpSocket* socket, const HttpRequest& reques
         return;
     }
 
+    if (!hasPermission(username, DownloadFile)) {
+        HttpResponse response;
+        response.statusCode = 403;
+        response.statusText = "Forbidden";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = jsonResponse({{"success", false}, {"error", "无权限下载文件"}});
+        sendResponse(socket, response);
+        return;
+    }
+
     QString clientId;
     QString relativePath;
     if (!parseFileId(request.params.value("id"), clientId, relativePath)) {
@@ -500,6 +542,26 @@ void WebServer::handleFileDownload(QTcpSocket* socket, const HttpRequest& reques
 }
 
 void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& request) {
+    // 检查认证和权限
+    QString username;
+    if (!isAuthenticated(request, username)) {
+        HttpResponse response;
+        response.statusCode = 401;
+        response.statusText = "Unauthorized";
+        sendResponse(socket, response);
+        return;
+    }
+
+    if (!hasPermission(username, BatchDownload)) {
+        HttpResponse response;
+        response.statusCode = 403;
+        response.statusText = "Forbidden";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = jsonResponse({{"success", false}, {"error", "无权限批量下载"}});
+        sendResponse(socket, response);
+        return;
+    }
+
     QString idsParam = request.params.value("ids");
     if (idsParam.isEmpty()) {
         HttpResponse response;
@@ -655,6 +717,28 @@ void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& reque
 }
 
 void WebServer::handleFilePreview(QTcpSocket* socket, const HttpRequest& request) {
+    // 检查认证和权限
+    QString username;
+    if (!isAuthenticated(request, username)) {
+        HttpResponse response;
+        response.statusCode = 401;
+        response.statusText = "Unauthorized";
+        response.headers["Content-Type"] = "text/html; charset=utf-8";
+        response.body = "<div class=\"empty\">未登录</div>";
+        sendResponse(socket, response);
+        return;
+    }
+
+    if (!hasPermission(username, PreviewFile)) {
+        HttpResponse response;
+        response.statusCode = 403;
+        response.statusText = "Forbidden";
+        response.headers["Content-Type"] = "text/html; charset=utf-8";
+        response.body = "<div class=\"empty\">无权限预览文件</div>";
+        sendResponse(socket, response);
+        return;
+    }
+
     QString clientId;
     QString relativePath;
     if (!parseFileId(request.params.value("id"), clientId, relativePath)) {
@@ -781,6 +865,10 @@ bool WebServer::isAuthenticated(const HttpRequest& request, QString& username) {
     return authManager_->validateSession(cookieValue(request, "CNS_SESSION"), username);
 }
 
+bool WebServer::hasPermission(const QString& username, UserPermissionFlag permission) {
+    return UserManager::instance()->hasPermission(username, permission);
+}
+
 QByteArray WebServer::buildHttpResponse(const HttpResponse& response) {
     QByteArray data;
     data += "HTTP/1.1 " + QByteArray::number(response.statusCode) + " " + response.statusText.toUtf8() + "\r\n";
@@ -809,6 +897,16 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
         response.statusText = "Unauthorized";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
         response.body = R"({"success":false,"error":"未登录"})";
+        sendResponse(socket, response);
+        return;
+    }
+
+    // 检查水印导出权限
+    if (!hasPermission(username, WatermarkExport)) {
+        response.statusCode = 403;
+        response.statusText = "Forbidden";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = R"({"success":false,"error":"无权限导出水印文档"})";
         sendResponse(socket, response);
         return;
     }
