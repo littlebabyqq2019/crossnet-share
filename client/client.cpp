@@ -41,7 +41,7 @@ Client::Client(QObject* parent)
 
     // 配置刷新定时器（延迟2分钟刷新，避免频繁更新）
     refreshTimer_->setSingleShot(true);
-    refreshTimer_->setInterval(120000);  // 2分钟 = 120000毫秒
+    refreshTimer_->setInterval(5000);  // 5秒 = 5000毫秒
     connect(refreshTimer_, &QTimer::timeout, this, &Client::onRefreshTimerTimeout);
 }
 
