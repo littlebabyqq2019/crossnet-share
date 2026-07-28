@@ -633,14 +633,14 @@ void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& reque
 
     // 异步请求所有文件
     for (const auto& req : requests) {
-        req.handler->requestFileAsync(req.relativePath, [this, socketPtr, filePaths, pendingCount, fileName = req.fileName](bool success, const QByteArray& data, const QString& error) {
-            if (success && !data.isEmpty()) {
+        req.handler->requestFileAsync(req.relativePath, [this, socketPtr, filePaths, pendingCount, fileName = req.fileName](const ClientHandler::FileRequestResult& result) {
+            if (result.success && !result.data.isEmpty()) {
                 // 保存到临时文件
                 QString uniqueId = QDateTime::currentDateTime().toString("yyyyMMddHHmmsszzz") + QString::number(qrand());
                 QString tempPath = QDir::temp().filePath(uniqueId + "_" + fileName);
                 QFile tempFile(tempPath);
                 if (tempFile.open(QIODevice::WriteOnly)) {
-                    tempFile.write(data);
+                    tempFile.write(result.data);
                     tempFile.close();
                     filePaths->append({tempPath, fileName});
                 }
@@ -945,20 +945,20 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
     // 异步请求客户端发送文件数据
     QPointer<QTcpSocket> socketPtr(socket);
 
-    handler->requestFileAsync(filePath, [this, socketPtr, filePath, username](bool success, const QByteArray& data, const QString& error) {
+    handler->requestFileAsync(filePath, [this, socketPtr, filePath, username](const ClientHandler::FileRequestResult& result) {
         if (!socketPtr) {
             return; // Socket已断开
         }
 
         HttpResponse response;
 
-        if (!success) {
+        if (!result.success) {
             response.statusCode = 500;
             response.statusText = "Internal Server Error";
             response.headers["Content-Type"] = "application/json; charset=utf-8";
             QJsonObject errorObj;
             errorObj["success"] = false;
-            errorObj["error"] = error;
+            errorObj["error"] = result.error;
             response.body = QJsonDocument(errorObj).toJson(QJsonDocument::Compact);
             sendResponse(socketPtr, response);
             return;
@@ -983,7 +983,7 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
             return;
         }
 
-        tempFile.write(data);
+        tempFile.write(result.data);
         tempFile.close();
 
         // 继续水印处理
