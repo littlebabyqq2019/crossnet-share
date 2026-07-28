@@ -6,6 +6,7 @@
 #include <QMap>
 #include <QString>
 #include <QByteArray>
+#include <QPointer>
 
 namespace CrossNetShare {
 

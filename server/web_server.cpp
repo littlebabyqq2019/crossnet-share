@@ -518,27 +518,36 @@ void WebServer::handleFileDownload(QTcpSocket* socket, const HttpRequest& reques
         return;
     }
 
-    // 从远程客户端获取
-    auto result = handler->requestFileSync(relativePath, 60000);
-    if (result.success) {
-        // 记录下载日志
-        AuditLogger::instance()->log(username, AuditAction::DownloadFile, relativePath, socket->peerAddress().toString(), true);
+    // 从远程客户端获取 - 使用异步请求
+    QPointer<QTcpSocket> socketPtr(socket);  // 使用 QPointer 跟踪 socket 生命周期
+    QString usernameCapture = username;
+    QString relativePathCapture = relativePath;
 
-        HttpResponse response;
-        response.headers["Content-Type"] = "application/octet-stream";
-        response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding(QFileInfo(relativePath).fileName()));
-        response.body = result.data;
-        sendResponse(socket, response);
-        return;
-    }
+    handler->requestFileAsync(relativePath, [this, socketPtr, usernameCapture, relativePathCapture](const ClientHandler::FileRequestResult& result) {
+        // 检查 socket 是否仍然有效
+        if (!socketPtr) {
+            return;  // Socket 已断开，不发送响应
+        }
 
-    // 获取失败
-    HttpResponse response;
-    response.statusCode = 500;
-    response.statusText = "Internal Server Error";
-    response.headers["Content-Type"] = "text/html; charset=utf-8";
-    response.body = "<html><body><h1>Download Failed</h1><p>" + result.error.toHtmlEscaped().toUtf8() + "</p></body></html>";
-    sendResponse(socket, response);
+        if (result.success) {
+            // 记录下载日志
+            AuditLogger::instance()->log(usernameCapture, AuditAction::DownloadFile, relativePathCapture, socketPtr->peerAddress().toString(), true);
+
+            HttpResponse response;
+            response.headers["Content-Type"] = "application/octet-stream";
+            response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding(QFileInfo(relativePathCapture).fileName()));
+            response.body = result.data;
+            sendResponse(socketPtr, response);
+        } else {
+            // 获取失败
+            HttpResponse response;
+            response.statusCode = 500;
+            response.statusText = "Internal Server Error";
+            response.headers["Content-Type"] = "text/html; charset=utf-8";
+            response.body = "<html><body><h1>Download Failed</h1><p>" + result.error.toHtmlEscaped().toUtf8() + "</p></body></html>";
+            sendResponse(socketPtr, response);
+        }
+    }, 60000);
 }
 
 void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& request) {
@@ -767,43 +776,52 @@ void WebServer::handleFilePreview(QTcpSocket* socket, const HttpRequest& request
         return;
     }
 
-    // 从远程客户端获取
-    auto result = handler->requestFileSync(relativePath, 60000);
-    if (result.success) {
-        // 将文件数据写入临时文件用于预览
-        QString uniqueId = QDateTime::currentDateTime().toString("yyyyMMddHHmmsszzz");
-        QString tempPath = QDir::temp().filePath("preview_" + uniqueId + "_" + QFileInfo(relativePath).fileName());
-        QFile tempFile(tempPath);
-        if (tempFile.open(QIODevice::WriteOnly)) {
-            tempFile.write(result.data);
-            tempFile.close();
+    // 从远程客户端获取 - 使用异步请求
+    QPointer<QTcpSocket> socketPtr(socket);
+    QString relativePathCapture = relativePath;
 
-            auto preview = DocumentConverter::previewFile(tempPath);
-            HttpResponse response;
-            if (!preview.success) {
-                response.statusCode = 415;
-                response.statusText = "Unsupported Media Type";
-                response.headers["Content-Type"] = "text/html; charset=utf-8";
-                response.body = "<div class=\"empty\">" + preview.error.toHtmlEscaped().toUtf8() + "</div>";
-            } else {
-                response.headers["Content-Type"] = preview.mimeType;
-                response.body = preview.data;
-            }
-
-            // 清理临时文件
-            QFile::remove(tempPath);
-            sendResponse(socket, response);
-            return;
+    handler->requestFileAsync(relativePath, [this, socketPtr, relativePathCapture](const ClientHandler::FileRequestResult& result) {
+        // 检查 socket 是否仍然有效
+        if (!socketPtr) {
+            return;  // Socket 已断开，不发送响应
         }
-    }
 
-    // 获取失败
-    HttpResponse response;
-    response.statusCode = 500;
-    response.statusText = "Internal Server Error";
-    response.headers["Content-Type"] = "text/html; charset=utf-8";
-    response.body = "<div class=\"empty\">Preview failed: " + result.error.toHtmlEscaped().toUtf8() + "</div>";
-    sendResponse(socket, response);
+        if (result.success) {
+            // 将文件数据写入临时文件用于预览
+            QString uniqueId = QDateTime::currentDateTime().toString("yyyyMMddHHmmsszzz");
+            QString tempPath = QDir::temp().filePath("preview_" + uniqueId + "_" + QFileInfo(relativePathCapture).fileName());
+            QFile tempFile(tempPath);
+            if (tempFile.open(QIODevice::WriteOnly)) {
+                tempFile.write(result.data);
+                tempFile.close();
+
+                auto preview = DocumentConverter::previewFile(tempPath);
+                HttpResponse response;
+                if (!preview.success) {
+                    response.statusCode = 415;
+                    response.statusText = "Unsupported Media Type";
+                    response.headers["Content-Type"] = "text/html; charset=utf-8";
+                    response.body = "<div class=\"empty\">" + preview.error.toHtmlEscaped().toUtf8() + "</div>";
+                } else {
+                    response.headers["Content-Type"] = preview.mimeType;
+                    response.body = preview.data;
+                }
+
+                // 清理临时文件
+                QFile::remove(tempPath);
+                sendResponse(socketPtr, response);
+                return;
+            }
+        }
+
+        // 获取失败
+        HttpResponse response;
+        response.statusCode = 500;
+        response.statusText = "Internal Server Error";
+        response.headers["Content-Type"] = "text/html; charset=utf-8";
+        response.body = "<div class=\"empty\">Preview failed: " + result.error.toHtmlEscaped().toUtf8() + "</div>";
+        sendResponse(socketPtr, response);
+    }, 60000);
 }
 
 void WebServer::serveStaticFile(QTcpSocket* socket, const QString& path) {

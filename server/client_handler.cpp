@@ -83,6 +83,64 @@ void ClientHandler::onError(QAbstractSocket::SocketError error) {
 }
 
 void ClientHandler::handleMessage(MessageType type, const nlohmann::json& payload) {
+    // 检查是否是异步文件请求的响应
+    if (asyncRequest_ && !asyncRequest_->completed) {
+        if (type == MessageType::DOWNLOAD_RESPONSE) {
+            // 文件开始传输，清空缓冲区
+            asyncRequest_->data.clear();
+            asyncRequest_->error.clear();
+            return;
+        } else if (type == MessageType::FILE_DATA) {
+            // 积累文件数据
+            try {
+                std::string dataBase64 = payload["data"].get<std::string>();
+                QByteArray chunk = QByteArray::fromBase64(QByteArray::fromStdString(dataBase64));
+                asyncRequest_->data.append(chunk);
+            } catch (...) {
+                asyncRequest_->completed = true;
+                asyncRequest_->timeoutTimer->stop();
+
+                FileRequestResult result;
+                result.success = false;
+                result.error = "Failed to decode file data";
+
+                auto callback = asyncRequest_->callback;
+                asyncRequest_.reset();
+
+                callback(result);
+            }
+            return;
+        } else if (type == MessageType::FILE_COMPLETE) {
+            // 文件传输完成
+            asyncRequest_->completed = true;
+            asyncRequest_->timeoutTimer->stop();
+
+            FileRequestResult result;
+            result.success = true;
+            result.data = asyncRequest_->data;
+
+            auto callback = asyncRequest_->callback;
+            asyncRequest_.reset();
+
+            callback(result);
+            return;
+        } else if (type == MessageType::ERROR_MESSAGE) {
+            // 错误
+            asyncRequest_->completed = true;
+            asyncRequest_->timeoutTimer->stop();
+
+            FileRequestResult result;
+            result.success = false;
+            result.error = QString::fromStdString(payload.value("error", "Unknown error"));
+
+            auto callback = asyncRequest_->callback;
+            asyncRequest_.reset();
+
+            callback(result);
+            return;
+        }
+    }
+
     // 检查是否是同步文件请求的响应
     if (syncRequestActive_) {
         if (type == MessageType::DOWNLOAD_RESPONSE) {
@@ -482,6 +540,47 @@ ClientHandler::FileRequestResult ClientHandler::requestFileSync(const QString& r
     result.success = true;
     result.data = syncRequestData_;
     return result;
+}
+
+void ClientHandler::requestFileAsync(const QString& relativePath, FileRequestCallback callback, int timeoutMs) {
+    // 检查是否已有异步请求在进行
+    if (asyncRequest_) {
+        FileRequestResult result;
+        result.success = false;
+        result.error = "Another async request is in progress";
+        callback(result);
+        return;
+    }
+
+    // 创建异步请求
+    asyncRequest_ = std::make_unique<AsyncFileRequest>();
+    asyncRequest_->relativePath = relativePath;
+    asyncRequest_->callback = callback;
+    asyncRequest_->completed = false;
+
+    // 创建超时定时器
+    asyncRequest_->timeoutTimer = new QTimer(this);
+    asyncRequest_->timeoutTimer->setSingleShot(true);
+    connect(asyncRequest_->timeoutTimer, &QTimer::timeout, this, [this]() {
+        if (asyncRequest_ && !asyncRequest_->completed) {
+            asyncRequest_->completed = true;
+            FileRequestResult result;
+            result.success = false;
+            result.error = "Request timeout";
+
+            auto callback = asyncRequest_->callback;
+            asyncRequest_.reset();  // 清理请求状态
+
+            callback(result);  // 调用回调
+        }
+    });
+    asyncRequest_->timeoutTimer->start(timeoutMs);
+
+    // 发送文件请求
+    nlohmann::json request;
+    request["ownerClient"] = clientId_.toStdString();
+    request["relativePath"] = relativePath.toStdString();
+    sendMessage(MessageType::DOWNLOAD_REQUEST, request);
 }
 
 void ClientHandler::requestRefresh() {

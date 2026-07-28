@@ -6,6 +6,9 @@
 #include <QObject>
 #include <QTcpSocket>
 #include <QByteArray>
+#include <QTimer>
+#include <functional>
+#include <memory>
 
 namespace CrossNetShare {
 
@@ -41,6 +44,10 @@ public:
         QString error;
     };
     FileRequestResult requestFileSync(const QString& relativePath, int timeoutMs = 30000);
+
+    // 异步请求文件数据（用于Web服务器，不阻塞UI）
+    using FileRequestCallback = std::function<void(const FileRequestResult&)>;
+    void requestFileAsync(const QString& relativePath, FileRequestCallback callback, int timeoutMs = 30000);
 
     // 请求客户端刷新文件索引
     void requestRefresh();
@@ -86,6 +93,17 @@ private:
     QByteArray syncRequestData_;
     bool syncRequestCompleted_;
     QString syncRequestError_;
+
+    // 异步文件请求状态
+    struct AsyncFileRequest {
+        QString relativePath;
+        FileRequestCallback callback;
+        QTimer* timeoutTimer;
+        QByteArray data;
+        bool completed;
+        QString error;
+    };
+    std::unique_ptr<AsyncFileRequest> asyncRequest_;
 };
 
 }
