@@ -107,6 +107,7 @@ void ClientHandler::handleMessage(MessageType type, const nlohmann::json& payloa
             if (responsePath.isEmpty() || responsePath == request->relativePath) {
                 if (type == MessageType::DOWNLOAD_RESPONSE) {
                     // 文件开始传输，清空缓冲区
+                    qDebug() << "[AsyncRequest] DOWNLOAD_RESPONSE for" << responseRequestId;
                     request->data.clear();
                     return;
                 } else if (type == MessageType::FILE_DATA) {
@@ -115,7 +116,9 @@ void ClientHandler::handleMessage(MessageType type, const nlohmann::json& payloa
                         std::string dataBase64 = payload["data"].get<std::string>();
                         QByteArray chunk = QByteArray::fromBase64(QByteArray::fromStdString(dataBase64));
                         request->data.append(chunk);
+                        qDebug() << "[AsyncRequest] FILE_DATA for" << responseRequestId << "| Size:" << chunk.size() << "| Total:" << request->data.size();
                     } catch (...) {
+                        qDebug() << "[AsyncRequest] FILE_DATA decode failed for" << responseRequestId;
                         request->completed = true;
                         FileRequestResult result;
                         result.success = false;
@@ -124,12 +127,14 @@ void ClientHandler::handleMessage(MessageType type, const nlohmann::json& payloa
                         auto callback = request->callback;
                         request->timeoutTimer->stop();
                         asyncRequests_.erase(it);
+                        qDebug() << "[AsyncRequest] Cleaned up failed request | Remaining:" << asyncRequests_.size();
 
                         callback(result);
                     }
                     return;
                 } else if (type == MessageType::FILE_COMPLETE) {
                     // 文件传输完成
+                    qDebug() << "[AsyncRequest] FILE_COMPLETE for" << responseRequestId << "| Total size:" << request->data.size();
                     request->completed = true;
                     FileRequestResult result;
                     result.success = true;
@@ -138,24 +143,34 @@ void ClientHandler::handleMessage(MessageType type, const nlohmann::json& payloa
                     auto callback = request->callback;
                     request->timeoutTimer->stop();
                     asyncRequests_.erase(it);
+                    qDebug() << "[AsyncRequest] Cleaned up completed request | Remaining:" << asyncRequests_.size();
 
                     callback(result);
                     return;
                 } else if (type == MessageType::ERROR_MESSAGE) {
                     // 错误
+                    QString error = QString::fromStdString(payload.value("error", "Unknown error"));
+                    qDebug() << "[AsyncRequest] ERROR_MESSAGE for" << responseRequestId << ":" << error;
                     request->completed = true;
                     FileRequestResult result;
                     result.success = false;
-                    result.error = QString::fromStdString(payload.value("error", "Unknown error"));
+                    result.error = error;
 
                     auto callback = request->callback;
                     request->timeoutTimer->stop();
                     asyncRequests_.erase(it);
+                    qDebug() << "[AsyncRequest] Cleaned up error request | Remaining:" << asyncRequests_.size();
 
                     callback(result);
                     return;
                 }
+            } else {
+                qDebug() << "[AsyncRequest] Path mismatch for" << responseRequestId
+                         << "| Expected:" << request->relativePath << "| Got:" << responsePath;
             }
+        } else if (!responseRequestId.isEmpty()) {
+            qDebug() << "[AsyncRequest] No matching request for" << responseRequestId
+                     << "| Active requests:" << asyncRequests_.size();
         }
     }
 
@@ -568,6 +583,9 @@ void ClientHandler::requestFileAsync(const QString& relativePath, FileRequestCal
         .arg(QDateTime::currentMSecsSinceEpoch())
         .arg(++requestCounter);
 
+    qDebug() << "[AsyncRequest] Creating request" << requestId << "for" << relativePath
+             << "| Active requests:" << asyncRequests_.size();
+
     // 创建异步请求
     auto asyncRequest = std::make_shared<AsyncFileRequest>();
     asyncRequest->requestId = requestId;
@@ -579,6 +597,7 @@ void ClientHandler::requestFileAsync(const QString& relativePath, FileRequestCal
     asyncRequest->timeoutTimer = new QTimer(this);
     asyncRequest->timeoutTimer->setSingleShot(true);
     connect(asyncRequest->timeoutTimer, &QTimer::timeout, this, [this, requestId]() {
+        qDebug() << "[AsyncRequest] Timeout for request" << requestId;
         auto it = asyncRequests_.find(requestId);
         if (it != asyncRequests_.end() && !it.value()->completed) {
             it.value()->completed = true;
@@ -589,6 +608,7 @@ void ClientHandler::requestFileAsync(const QString& relativePath, FileRequestCal
             auto callback = it.value()->callback;
             it.value()->timeoutTimer->stop();
             asyncRequests_.erase(it);  // 清理请求状态
+            qDebug() << "[AsyncRequest] Cleaned up timeout request | Remaining:" << asyncRequests_.size();
 
             callback(result);  // 调用回调
         }
