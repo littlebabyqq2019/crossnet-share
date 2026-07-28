@@ -7,6 +7,7 @@
 #include <QTcpServer>
 #include <QList>
 #include <QHostAddress>
+#include <QThread>
 
 namespace CrossNetShare {
 
@@ -78,6 +79,7 @@ private:
     FileIndexer indexer_;
     FileWatcher* fileWatcher_;
     WebServer* webServer_;
+    QThread* webServerThread_;
     AuthManager* authManager_;
 };
 
