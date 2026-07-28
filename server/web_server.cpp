@@ -591,9 +591,24 @@ void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& reque
         return;
     }
 
-    // 收集所有文件路径
-    QStringList filePaths;
-    QStringList fileNames;
+    // 使用异步方式收集所有文件
+    struct FileInfo {
+        QString tempPath;
+        QString fileName;
+    };
+
+    auto filePaths = std::make_shared<QList<FileInfo>>();
+    auto pendingCount = std::make_shared<int>(0);
+    QPointer<QTcpSocket> socketPtr(socket);
+
+    // 解析所有文件ID并准备请求
+    struct FileRequest {
+        ClientHandler* handler;
+        QString relativePath;
+        QString fileName;
+    };
+    QList<FileRequest> requests;
+
     for (const QString& id : ids) {
         QString clientId;
         QString relativePath;
@@ -604,29 +619,13 @@ void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& reque
         QString fullPath = indexer_->resolveFilePath(clientId, relativePath);
         QFileInfo info(fullPath);
 
-        // 只从在线客户端获取文件
         ClientHandler* handler = server_ ? server_->findClientHandler(clientId) : nullptr;
-
         if (handler) {
-            // 从远程客户端获取
-            auto result = handler->requestFileSync(relativePath, 60000);
-            if (result.success && !result.data.isEmpty()) {
-                // 保存到临时文件（使用唯一ID避免冲突，但保持原始文件名）
-                QString uniqueId = QDateTime::currentDateTime().toString("yyyyMMddHHmmsszzz");
-                QString tempPath = QDir::temp().filePath(uniqueId + "_" + info.fileName());
-                QFile tempFile(tempPath);
-                if (tempFile.open(QIODevice::WriteOnly)) {
-                    tempFile.write(result.data);
-                    tempFile.close();
-                    filePaths.append(tempPath);
-                    fileNames.append(info.fileName());
-                }
-            }
+            requests.append({handler, relativePath, info.fileName()});
         }
-        // 如果客户端离线，跳过该文件（不使用服务器本地文件）
     }
 
-    if (filePaths.isEmpty()) {
+    if (requests.isEmpty()) {
         HttpResponse response;
         response.statusCode = 404;
         response.statusText = "Not Found";
@@ -635,93 +634,43 @@ void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& reque
         return;
     }
 
-    // 如果只有一个文件，直接下载
-    if (filePaths.size() == 1) {
-        QFile file(filePaths[0]);
-        if (file.open(QIODevice::ReadOnly)) {
-            HttpResponse response;
-            response.headers["Content-Type"] = "application/octet-stream";
-            response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding(fileNames[0]));
-            response.body = file.readAll();
-            sendResponse(socket, response);
-            return;
-        }
-    }
+    *pendingCount = requests.size();
 
-    // 多个文件需要打包成 ZIP
-    // 创建临时目录用于存放要压缩的文件
-    QString uniqueId = QDateTime::currentDateTime().toString("yyyyMMddHHmmsszzz");
-    QString tempDir = QDir::temp().filePath("crossnet_batch_" + uniqueId);
-    QDir().mkpath(tempDir);
-
-    // 将文件复制到临时目录（保持原始文件名）
-    QStringList tempFilePaths;
-    for (int i = 0; i < filePaths.size(); ++i) {
-        QString targetPath = QDir(tempDir).filePath(fileNames[i]);
-        if (QFile::copy(filePaths[i], targetPath)) {
-            tempFilePaths.append(targetPath);
-        }
-    }
-
-    QString zipPath = QDir::temp().filePath("files_" + uniqueId + ".zip");
-
-    // 使用系统命令创建 ZIP
-    QProcess zipProcess;
-    QStringList zipArgs;
-
-#ifdef Q_OS_WIN
-    // Windows 使用 PowerShell 的 Compress-Archive
-    zipArgs << "-NoProfile" << "-Command";
-    QString psCmd = "Compress-Archive -Path '" + tempDir.replace("'", "''") + "\\*' -DestinationPath '" + zipPath.replace("'", "''") + "' -Force";
-    zipArgs << psCmd;
-    zipProcess.start("powershell.exe", zipArgs);
-#else
-    // Linux/Mac 使用 zip 命令
-    zipArgs << "-j" << zipPath;  // -j 不保留目录结构
-    zipArgs << tempFilePaths;
-    zipProcess.start("zip", zipArgs);
-#endif
-
-    if (!zipProcess.waitForFinished(30000) || zipProcess.exitCode() != 0) {
-        // 清理临时目录
-        QDir(tempDir).removeRecursively();
-
-        HttpResponse response;
-        response.statusCode = 500;
-        response.statusText = "Internal Server Error";
-        response.body = "Failed to create ZIP archive";
-        sendResponse(socket, response);
-        return;
-    }
-
-    // 发送 ZIP 文件
-    QFile zipFile(zipPath);
-    if (zipFile.open(QIODevice::ReadOnly)) {
-        HttpResponse response;
-        response.headers["Content-Type"] = "application/zip";
-        response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding("files_" + QDateTime::currentDateTime().toString("yyyyMMddHHmmss") + ".zip"));
-        response.body = zipFile.readAll();
-        zipFile.close();
-        sendResponse(socket, response);
-
-        // 清理临时文件
-        QFile::remove(zipPath);
-        QDir(tempDir).removeRecursively();
-
-        // 清理从远程客户端下载的临时文件
-        for (const QString& path : filePaths) {
-            if (path.startsWith(QDir::temp().path()) && !path.startsWith(tempDir)) {
-                QFile::remove(path);
+    // 异步请求所有文件
+    for (const auto& req : requests) {
+        req.handler->requestFileAsync(req.relativePath, [this, socketPtr, filePaths, pendingCount, fileName = req.fileName](bool success, const QByteArray& data, const QString& error) {
+            if (success && !data.isEmpty()) {
+                // 保存到临时文件
+                QString uniqueId = QDateTime::currentDateTime().toString("yyyyMMddHHmmsszzz") + QString::number(qrand());
+                QString tempPath = QDir::temp().filePath(uniqueId + "_" + fileName);
+                QFile tempFile(tempPath);
+                if (tempFile.open(QIODevice::WriteOnly)) {
+                    tempFile.write(data);
+                    tempFile.close();
+                    filePaths->append({tempPath, fileName});
+                }
             }
-        }
-    } else {
-        QDir(tempDir).removeRecursively();
 
-        HttpResponse response;
-        response.statusCode = 500;
-        response.statusText = "Internal Server Error";
-        response.body = "Failed to read ZIP archive";
-        sendResponse(socket, response);
+            (*pendingCount)--;
+
+            // 所有文件都收集完成
+            if (*pendingCount == 0) {
+                if (!socketPtr || filePaths->isEmpty()) {
+                    // Socket已断开或没有文件
+                    if (socketPtr) {
+                        HttpResponse response;
+                        response.statusCode = 404;
+                        response.statusText = "Not Found";
+                        response.body = "No files available";
+                        sendResponse(socketPtr, response);
+                    }
+                    return;
+                }
+
+                // 继续处理打包和发送
+                processBatchDownloadFiles(socketPtr, *filePaths);
+            }
+        }, 60000);
     }
 }
 
@@ -998,42 +947,255 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
         return;
     }
 
-    // 请求客户端发送文件数据
-    ClientHandler::FileRequestResult result = handler->requestFileSync(filePath, 30000);
+    // 异步请求客户端发送文件数据
+    QPointer<QTcpSocket> socketPtr(socket);
+    QString username;
+    isAuthenticated(request, username);
 
-    if (!result.success) {
-        response.statusCode = 500;
-        response.statusText = "Internal Server Error";
+    handler->requestFileAsync(filePath, [this, socketPtr, filePath, username](bool success, const QByteArray& data, const QString& error) {
+        if (!socketPtr) {
+            return; // Socket已断开
+        }
+
+        HttpResponse response;
+
+        if (!success) {
+            response.statusCode = 500;
+            response.statusText = "Internal Server Error";
+            response.headers["Content-Type"] = "application/json; charset=utf-8";
+            QJsonObject errorObj;
+            errorObj["success"] = false;
+            errorObj["error"] = error;
+            response.body = QJsonDocument(errorObj).toJson(QJsonDocument::Compact);
+            sendResponse(socketPtr, response);
+            return;
+        }
+
+        // 创建临时目录
+        QString tempDir = QDir::tempPath() + "/crossnet_watermark_" + QString::number(QDateTime::currentMSecsSinceEpoch());
+        QDir().mkpath(tempDir);
+
+        // 保存原始文件到临时目录
+        QString originalFileName = QFileInfo(filePath).fileName();
+        QString tempFilePath = tempDir + "/" + originalFileName;
+
+        QFile tempFile(tempFilePath);
+        if (!tempFile.open(QIODevice::WriteOnly)) {
+            response.statusCode = 500;
+            response.statusText = "Internal Server Error";
+            response.headers["Content-Type"] = "application/json; charset=utf-8";
+            response.body = R"({"success":false,"error":"无法创建临时文件"})";
+            sendResponse(socketPtr, response);
+            QDir(tempDir).removeRecursively();
+            return;
+        }
+
+        tempFile.write(data);
+        tempFile.close();
+
+        // 继续水印处理
+        processWatermarkGeneration(socketPtr, tempDir, tempFilePath, username);
+    }, 30000);
+}
+
+void WebServer::handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& request) {
+    HttpResponse response;
+
+    qDebug() << "[Watermark Download] Request path:" << request.path;
+
+    // 检查认证
+    QString username;
+    if (!isAuthenticated(request, username)) {
+        qDebug() << "[Watermark Download] Authentication failed";
+        response.statusCode = 401;
+        response.statusText = "Unauthorized";
         response.headers["Content-Type"] = "application/json; charset=utf-8";
-        QJsonObject errorObj;
-        errorObj["success"] = false;
-        errorObj["error"] = result.error;
-        response.body = QJsonDocument(errorObj).toJson(QJsonDocument::Compact);
+        response.body = R"({"success":false,"error":"未登录"})";
         sendResponse(socket, response);
         return;
     }
 
-    // 创建临时目录
-    QString tempDir = QDir::tempPath() + "/crossnet_watermark_" + QString::number(QDateTime::currentMSecsSinceEpoch());
+    // 解析查询参数
+    QString sessionId = request.params.value("sessionId");
+    QString fileName = request.params.value("fileName");
+
+    qDebug() << "[Watermark Download] sessionId:" << sessionId << "fileName:" << fileName;
+
+    if (sessionId.isEmpty() || fileName.isEmpty()) {
+        qDebug() << "[Watermark Download] Missing parameters";
+        response.statusCode = 400;
+        response.statusText = "Bad Request";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = R"({"success":false,"error":"缺少sessionId或fileName参数"})";
+        sendResponse(socket, response);
+        return;
+    }
+
+    // 查找会话
+    if (!watermarkSessions_.contains(sessionId)) {
+        qDebug() << "[Watermark Download] Session not found:" << sessionId;
+        response.statusCode = 404;
+        response.statusText = "Not Found";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = R"({"success":false,"error":"会话不存在或已过期"})";
+        sendResponse(socket, response);
+        return;
+    }
+
+    WatermarkSession session = watermarkSessions_[sessionId];
+    QString filePath = session.tempDir + "/" + fileName;
+
+    qDebug() << "[Watermark Download] File path:" << filePath;
+
+    // 读取文件
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qDebug() << "[Watermark Download] Failed to open file:" << filePath;
+        response.statusCode = 404;
+        response.statusText = "Not Found";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = R"({"success":false,"error":"文件不存在"})";
+        sendResponse(socket, response);
+        return;
+    }
+
+    QByteArray fileData = file.readAll();
+    file.close();
+
+    qDebug() << "[Watermark Download] Sending file, size:" << fileData.size() << "bytes";
+
+    // 返回图片文件
+    response.statusCode = 200;
+    response.statusText = "OK";
+    response.headers["Content-Type"] = "image/jpeg";
+    response.headers["Content-Disposition"] = "attachment; filename=\"" + fileName.toUtf8() + "\"";
+    response.body = fileData;
+
+    sendResponse(socket, response);
+
+    // 检查是否所有文件都已下载，如果是则清理会话
+    session.fileNames.removeOne(fileName);
+    if (session.fileNames.isEmpty()) {
+        QDir(session.tempDir).removeRecursively();
+        watermarkSessions_.remove(sessionId);
+        qDebug() << "[Watermark Download] Session" << sessionId << "completed and cleaned up";
+    } else {
+        watermarkSessions_[sessionId] = session;
+        qDebug() << "[Watermark Download] Remaining files:" << session.fileNames.size();
+    }
+}
+
+void WebServer::processBatchDownloadFiles(QTcpSocket* socket, const QList<FileInfo>& files) {
+    if (files.isEmpty()) {
+        HttpResponse response;
+        response.statusCode = 404;
+        response.statusText = "Not Found";
+        response.body = "No files available";
+        sendResponse(socket, response);
+        return;
+    }
+
+    // 如果只有一个文件，直接下载
+    if (files.size() == 1) {
+        QFile file(files[0].tempPath);
+        if (file.open(QIODevice::ReadOnly)) {
+            HttpResponse response;
+            response.headers["Content-Type"] = "application/octet-stream";
+            response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding(files[0].fileName));
+            response.body = file.readAll();
+            file.close();
+            sendResponse(socket, response);
+
+            // 清理临时文件
+            QFile::remove(files[0].tempPath);
+            return;
+        }
+    }
+
+    // 多个文件需要打包成 ZIP
+    QString uniqueId = QDateTime::currentDateTime().toString("yyyyMMddHHmmsszzz");
+    QString tempDir = QDir::temp().filePath("crossnet_batch_" + uniqueId);
     QDir().mkpath(tempDir);
 
-    // 保存原始文件到临时目录
-    QString originalFileName = QFileInfo(filePath).fileName();
-    QString tempFilePath = tempDir + "/" + originalFileName;
+    // 将文件复制到临时目录（保持原始文件名）
+    QStringList tempFilePaths;
+    for (const auto& fileInfo : files) {
+        QString targetPath = QDir(tempDir).filePath(fileInfo.fileName);
+        if (QFile::copy(fileInfo.tempPath, targetPath)) {
+            tempFilePaths.append(targetPath);
+        }
+    }
 
-    QFile tempFile(tempFilePath);
-    if (!tempFile.open(QIODevice::WriteOnly)) {
+    QString zipPath = QDir::temp().filePath("files_" + uniqueId + ".zip");
+
+    // 使用系统命令创建 ZIP
+    QProcess zipProcess;
+    QStringList zipArgs;
+
+#ifdef Q_OS_WIN
+    // Windows 使用 PowerShell 的 Compress-Archive
+    zipArgs << "-NoProfile" << "-Command";
+    QString psCmd = "Compress-Archive -Path '" + tempDir.replace("'", "''") + "\\*' -DestinationPath '" + zipPath.replace("'", "''") + "' -Force";
+    zipArgs << psCmd;
+    zipProcess.start("powershell.exe", zipArgs);
+#else
+    // Linux/Mac 使用 zip 命令
+    zipArgs << "-j" << zipPath;  // -j 不保留目录结构
+    zipArgs << tempFilePaths;
+    zipProcess.start("zip", zipArgs);
+#endif
+
+    if (!zipProcess.waitForFinished(30000) || zipProcess.exitCode() != 0) {
+        // 清理临时目录
+        QDir(tempDir).removeRecursively();
+        for (const auto& fileInfo : files) {
+            QFile::remove(fileInfo.tempPath);
+        }
+
+        HttpResponse response;
         response.statusCode = 500;
         response.statusText = "Internal Server Error";
-        response.headers["Content-Type"] = "application/json; charset=utf-8";
-        response.body = R"({"success":false,"error":"无法创建临时文件"})";
+        response.body = "Failed to create ZIP archive";
         sendResponse(socket, response);
-        QDir(tempDir).removeRecursively();
         return;
     }
 
-    tempFile.write(result.data);
-    tempFile.close();
+    // 发送 ZIP 文件
+    QFile zipFile(zipPath);
+    if (zipFile.open(QIODevice::ReadOnly)) {
+        HttpResponse response;
+        response.headers["Content-Type"] = "application/zip";
+        response.headers["Content-Disposition"] = "attachment; filename*=UTF-8''" + QString::fromLatin1(QUrl::toPercentEncoding("files_" + QDateTime::currentDateTime().toString("yyyyMMddHHmmss") + ".zip"));
+        response.body = zipFile.readAll();
+        zipFile.close();
+        sendResponse(socket, response);
+
+        // 清理所有临时文件
+        QFile::remove(zipPath);
+        QDir(tempDir).removeRecursively();
+        for (const auto& fileInfo : files) {
+            if (fileInfo.tempPath.startsWith(QDir::temp().path()) && !fileInfo.tempPath.startsWith(tempDir)) {
+                QFile::remove(fileInfo.tempPath);
+            }
+        }
+    } else {
+        QDir(tempDir).removeRecursively();
+        for (const auto& fileInfo : files) {
+            QFile::remove(fileInfo.tempPath);
+        }
+
+        HttpResponse response;
+        response.statusCode = 500;
+        response.statusText = "Internal Server Error";
+        response.body = "Failed to read ZIP archive";
+        sendResponse(socket, response);
+    }
+}
+
+void WebServer::processWatermarkGeneration(QTcpSocket* socket, const QString& tempDir, const QString& tempFilePath, const QString& username) {
+    HttpResponse response;
+
+    QString originalFileName = QFileInfo(tempFilePath).fileName();
 
     // 生成水印图片
     qDebug() << "[Watermark] Calling generateWatermarkedImages with:" << tempFilePath;
@@ -1128,95 +1290,9 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
     }
 
     // 记录审计日志
+    QString filePath = tempFilePath; // 使用临时文件路径作为文件标识
     emit logMessage(QString("[Watermark] User '%1' generated watermark for '%2' (%3 files)")
         .arg(username, filePath, QString::number(watermarkResult.generatedFiles.size())));
-}
-
-void WebServer::handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& request) {
-    HttpResponse response;
-
-    qDebug() << "[Watermark Download] Request path:" << request.path;
-
-    // 检查认证
-    QString username;
-    if (!isAuthenticated(request, username)) {
-        qDebug() << "[Watermark Download] Authentication failed";
-        response.statusCode = 401;
-        response.statusText = "Unauthorized";
-        response.headers["Content-Type"] = "application/json; charset=utf-8";
-        response.body = R"({"success":false,"error":"未登录"})";
-        sendResponse(socket, response);
-        return;
-    }
-
-    // 解析查询参数
-    QString sessionId = request.params.value("sessionId");
-    QString fileName = request.params.value("fileName");
-
-    qDebug() << "[Watermark Download] sessionId:" << sessionId << "fileName:" << fileName;
-
-    if (sessionId.isEmpty() || fileName.isEmpty()) {
-        qDebug() << "[Watermark Download] Missing parameters";
-        response.statusCode = 400;
-        response.statusText = "Bad Request";
-        response.headers["Content-Type"] = "application/json; charset=utf-8";
-        response.body = R"({"success":false,"error":"缺少sessionId或fileName参数"})";
-        sendResponse(socket, response);
-        return;
-    }
-
-    // 查找会话
-    if (!watermarkSessions_.contains(sessionId)) {
-        qDebug() << "[Watermark Download] Session not found:" << sessionId;
-        response.statusCode = 404;
-        response.statusText = "Not Found";
-        response.headers["Content-Type"] = "application/json; charset=utf-8";
-        response.body = R"({"success":false,"error":"会话不存在或已过期"})";
-        sendResponse(socket, response);
-        return;
-    }
-
-    WatermarkSession session = watermarkSessions_[sessionId];
-    QString filePath = session.tempDir + "/" + fileName;
-
-    qDebug() << "[Watermark Download] File path:" << filePath;
-
-    // 读取文件
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        qDebug() << "[Watermark Download] Failed to open file:" << filePath;
-        response.statusCode = 404;
-        response.statusText = "Not Found";
-        response.headers["Content-Type"] = "application/json; charset=utf-8";
-        response.body = R"({"success":false,"error":"文件不存在"})";
-        sendResponse(socket, response);
-        return;
-    }
-
-    QByteArray fileData = file.readAll();
-    file.close();
-
-    qDebug() << "[Watermark Download] Sending file, size:" << fileData.size() << "bytes";
-
-    // 返回图片文件
-    response.statusCode = 200;
-    response.statusText = "OK";
-    response.headers["Content-Type"] = "image/jpeg";
-    response.headers["Content-Disposition"] = "attachment; filename=\"" + fileName.toUtf8() + "\"";
-    response.body = fileData;
-
-    sendResponse(socket, response);
-
-    // 检查是否所有文件都已下载，如果是则清理会话
-    session.fileNames.removeOne(fileName);
-    if (session.fileNames.isEmpty()) {
-        QDir(session.tempDir).removeRecursively();
-        watermarkSessions_.remove(sessionId);
-        qDebug() << "[Watermark Download] Session" << sessionId << "completed and cleaned up";
-    } else {
-        watermarkSessions_[sessionId] = session;
-        qDebug() << "[Watermark Download] Remaining files:" << session.fileNames.size();
-    }
 }
 
 }

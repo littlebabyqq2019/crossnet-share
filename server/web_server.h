@@ -90,6 +90,16 @@ private:
     bool hasPermission(const QString& username, UserPermissionFlag permission);
     QByteArray buildHttpResponse(const HttpResponse& response);
 
+    // Batch download helper
+    struct FileInfo {
+        QString tempPath;
+        QString fileName;
+    };
+    void processBatchDownloadFiles(QTcpSocket* socket, const QList<FileInfo>& files);
+
+    // Watermark helper
+    void processWatermarkGeneration(QTcpSocket* socket, const QString& tempDir, const QString& tempFilePath, const QString& username);
+
     QTcpServer* tcpServer_;
     FileIndexer* indexer_;
     AuthManager* authManager_;
