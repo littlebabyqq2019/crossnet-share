@@ -10,6 +10,7 @@
 #include <QHostAddress>
 #include <QEventLoop>
 #include <QTimer>
+#include <QDateTime>
 
 namespace CrossNetShare {
 
@@ -142,64 +143,76 @@ void ClientHandler::handleMessage(MessageType type, const nlohmann::json& payloa
     }
 
     // 检查是否是异步文件请求的响应
-    if (asyncRequest_ && !asyncRequest_->completed) {
-        // 验证 relativePath 是否匹配
-        QString responsePath;
-        if (payload.contains("relativePath")) {
-            responsePath = QString::fromStdString(payload["relativePath"].get<std::string>());
+    if (!asyncRequests_.isEmpty()) {
+        // 从响应中提取 requestId
+        QString responseRequestId;
+        if (payload.contains("requestId")) {
+            responseRequestId = QString::fromStdString(payload["requestId"].get<std::string>());
         }
 
-        // 只有 relativePath 匹配才处理
-        if (responsePath == asyncRequest_->relativePath) {
-            if (type == MessageType::DOWNLOAD_RESPONSE) {
-                // 文件开始传输，清空缓冲区
-                asyncRequest_->data.clear();
-                return;
-            } else if (type == MessageType::FILE_DATA) {
-                // 积累文件数据
-                try {
-                    std::string dataBase64 = payload["data"].get<std::string>();
-                    QByteArray chunk = QByteArray::fromBase64(QByteArray::fromStdString(dataBase64));
-                    asyncRequest_->data.append(chunk);
-                } catch (...) {
-                    asyncRequest_->completed = true;
-                    FileRequestResult result;
-                    result.success = false;
-                    result.error = "Failed to decode file data";
+        // 查找匹配的请求
+        auto it = asyncRequests_.find(responseRequestId);
+        if (it != asyncRequests_.end() && !it.value()->completed) {
+            auto& request = it.value();
 
-                    auto callback = asyncRequest_->callback;
-                    asyncRequest_->timeoutTimer->stop();
-                    asyncRequest_.reset();
+            // 验证 relativePath 是否匹配（双重验证）
+            QString responsePath;
+            if (payload.contains("relativePath")) {
+                responsePath = QString::fromStdString(payload["relativePath"].get<std::string>());
+            }
+
+            // 只有 requestId 和 relativePath 都匹配才处理
+            if (responsePath.isEmpty() || responsePath == request->relativePath) {
+                if (type == MessageType::DOWNLOAD_RESPONSE) {
+                    // 文件开始传输，清空缓冲区
+                    request->data.clear();
+                    return;
+                } else if (type == MessageType::FILE_DATA) {
+                    // 积累文件数据
+                    try {
+                        std::string dataBase64 = payload["data"].get<std::string>();
+                        QByteArray chunk = QByteArray::fromBase64(QByteArray::fromStdString(dataBase64));
+                        request->data.append(chunk);
+                    } catch (...) {
+                        request->completed = true;
+                        FileRequestResult result;
+                        result.success = false;
+                        result.error = "Failed to decode file data";
+
+                        auto callback = request->callback;
+                        request->timeoutTimer->stop();
+                        asyncRequests_.erase(it);
+
+                        callback(result);
+                    }
+                    return;
+                } else if (type == MessageType::FILE_COMPLETE) {
+                    // 文件传输完成
+                    request->completed = true;
+                    FileRequestResult result;
+                    result.success = true;
+                    result.data = request->data;
+
+                    auto callback = request->callback;
+                    request->timeoutTimer->stop();
+                    asyncRequests_.erase(it);
 
                     callback(result);
+                    return;
+                } else if (type == MessageType::ERROR_MESSAGE) {
+                    // 错误
+                    request->completed = true;
+                    FileRequestResult result;
+                    result.success = false;
+                    result.error = QString::fromStdString(payload.value("error", "Unknown error"));
+
+                    auto callback = request->callback;
+                    request->timeoutTimer->stop();
+                    asyncRequests_.erase(it);
+
+                    callback(result);
+                    return;
                 }
-                return;
-            } else if (type == MessageType::FILE_COMPLETE) {
-                // 文件传输完成
-                asyncRequest_->completed = true;
-                FileRequestResult result;
-                result.success = true;
-                result.data = asyncRequest_->data;
-
-                auto callback = asyncRequest_->callback;
-                asyncRequest_->timeoutTimer->stop();
-                asyncRequest_.reset();
-
-                callback(result);
-                return;
-            } else if (type == MessageType::ERROR_MESSAGE) {
-                // 错误
-                asyncRequest_->completed = true;
-                FileRequestResult result;
-                result.success = false;
-                result.error = QString::fromStdString(payload.value("error", "Unknown error"));
-
-                auto callback = asyncRequest_->callback;
-                asyncRequest_->timeoutTimer->stop();
-                asyncRequest_.reset();
-
-                callback(result);
-                return;
             }
         }
     }
@@ -606,41 +619,46 @@ ClientHandler::FileRequestResult ClientHandler::requestFileSync(const QString& r
 }
 
 void ClientHandler::requestFileAsync(const QString& relativePath, FileRequestCallback callback, int timeoutMs) {
-    // 检查是否已有异步请求在进行
-    if (asyncRequest_) {
-        FileRequestResult result;
-        result.success = false;
-        result.error = "Another async request is in progress";
-        callback(result);
-        return;
-    }
+    // 生成唯一的请求 ID
+    static int requestCounter = 0;
+    QString requestId = QString("%1_%2_%3")
+        .arg(clientId_)
+        .arg(QDateTime::currentMSecsSinceEpoch())
+        .arg(++requestCounter);
 
     // 创建异步请求
-    asyncRequest_ = std::make_unique<AsyncFileRequest>();
-    asyncRequest_->relativePath = relativePath;
-    asyncRequest_->callback = callback;
-    asyncRequest_->completed = false;
+    auto asyncRequest = std::make_unique<AsyncFileRequest>();
+    asyncRequest->requestId = requestId;
+    asyncRequest->relativePath = relativePath;
+    asyncRequest->callback = callback;
+    asyncRequest->completed = false;
 
     // 创建超时定时器
-    asyncRequest_->timeoutTimer = new QTimer(this);
-    asyncRequest_->timeoutTimer->setSingleShot(true);
-    connect(asyncRequest_->timeoutTimer, &QTimer::timeout, this, [this]() {
-        if (asyncRequest_ && !asyncRequest_->completed) {
-            asyncRequest_->completed = true;
+    asyncRequest->timeoutTimer = new QTimer(this);
+    asyncRequest->timeoutTimer->setSingleShot(true);
+    connect(asyncRequest->timeoutTimer, &QTimer::timeout, this, [this, requestId]() {
+        auto it = asyncRequests_.find(requestId);
+        if (it != asyncRequests_.end() && !it.value()->completed) {
+            it.value()->completed = true;
             FileRequestResult result;
             result.success = false;
             result.error = "Request timeout";
 
-            auto callback = asyncRequest_->callback;
-            asyncRequest_.reset();  // 清理请求状态
+            auto callback = it.value()->callback;
+            it.value()->timeoutTimer->stop();
+            asyncRequests_.erase(it);  // 清理请求状态
 
             callback(result);  // 调用回调
         }
     });
-    asyncRequest_->timeoutTimer->start(timeoutMs);
+    asyncRequest->timeoutTimer->start(timeoutMs);
+
+    // 保存请求
+    asyncRequests_[requestId] = std::move(asyncRequest);
 
     // 发送文件请求
     nlohmann::json request;
+    request["requestId"] = requestId.toStdString();
     request["ownerClient"] = clientId_.toStdString();
     request["relativePath"] = relativePath.toStdString();
     sendMessage(MessageType::DOWNLOAD_REQUEST, request);

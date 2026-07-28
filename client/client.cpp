@@ -387,12 +387,22 @@ void Client::handleDownloadRequest(const nlohmann::json& payload) {
     try {
         QString relativePath = QString::fromStdString(payload["relativePath"].get<std::string>());
 
+        // 提取 requestId（如果有）
+        QString requestId;
+        if (payload.contains("requestId")) {
+            requestId = QString::fromStdString(payload["requestId"].get<std::string>());
+        }
+
         // 构建完整路径
         QString fullPath = FileUtils::joinPath(sharePath_, relativePath);
         QFileInfo fileInfo(fullPath);
 
         if (!fileInfo.exists() || !fileInfo.isFile()) {
             nlohmann::json errorResponse;
+            if (!requestId.isEmpty()) {
+                errorResponse["requestId"] = requestId.toStdString();
+            }
+            errorResponse["relativePath"] = relativePath.toStdString();
             errorResponse["error"] = "File not found: " + relativePath.toStdString();
             sendMessage(MessageType::ERROR_MESSAGE, errorResponse);
             return;
@@ -402,6 +412,10 @@ void Client::handleDownloadRequest(const nlohmann::json& payload) {
         QFile file(fullPath);
         if (!file.open(QIODevice::ReadOnly)) {
             nlohmann::json errorResponse;
+            if (!requestId.isEmpty()) {
+                errorResponse["requestId"] = requestId.toStdString();
+            }
+            errorResponse["relativePath"] = relativePath.toStdString();
             errorResponse["error"] = "Cannot read file: " + file.errorString().toStdString();
             sendMessage(MessageType::ERROR_MESSAGE, errorResponse);
             return;
@@ -409,6 +423,9 @@ void Client::handleDownloadRequest(const nlohmann::json& payload) {
 
         // 发送下载响应
         nlohmann::json response;
+        if (!requestId.isEmpty()) {
+            response["requestId"] = requestId.toStdString();
+        }
         response["relativePath"] = relativePath.toStdString();
         response["filename"] = fileInfo.fileName().toStdString();
         response["size"] = fileInfo.size();
@@ -419,6 +436,9 @@ void Client::handleDownloadRequest(const nlohmann::json& payload) {
         while (!file.atEnd()) {
             QByteArray chunk = file.read(chunkSize);
             nlohmann::json dataMsg;
+            if (!requestId.isEmpty()) {
+                dataMsg["requestId"] = requestId.toStdString();
+            }
             dataMsg["relativePath"] = relativePath.toStdString();
             dataMsg["data"] = chunk.toBase64().toStdString();
             sendMessage(MessageType::FILE_DATA, dataMsg);
@@ -428,6 +448,9 @@ void Client::handleDownloadRequest(const nlohmann::json& payload) {
 
         // 发送完成消息
         nlohmann::json completeMsg;
+        if (!requestId.isEmpty()) {
+            completeMsg["requestId"] = requestId.toStdString();
+        }
         completeMsg["relativePath"] = relativePath.toStdString();
         completeMsg["success"] = true;
         sendMessage(MessageType::FILE_COMPLETE, completeMsg);

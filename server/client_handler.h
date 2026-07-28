@@ -96,6 +96,7 @@ private:
 
     // 异步文件请求状态
     struct AsyncFileRequest {
+        QString requestId;
         QString relativePath;
         FileRequestCallback callback;
         QTimer* timeoutTimer;
@@ -103,7 +104,7 @@ private:
         bool completed;
         QString error;
     };
-    std::unique_ptr<AsyncFileRequest> asyncRequest_;
+    QMap<QString, std::unique_ptr<AsyncFileRequest>> asyncRequests_;
 };
 
 }
