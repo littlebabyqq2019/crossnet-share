@@ -104,7 +104,7 @@ private:
         bool completed;
         QString error;
     };
-    QMap<QString, std::unique_ptr<AsyncFileRequest>> asyncRequests_;
+    QMap<QString, std::shared_ptr<AsyncFileRequest>> asyncRequests_;
 };
 
 }

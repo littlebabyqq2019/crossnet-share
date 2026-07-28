@@ -569,7 +569,7 @@ void ClientHandler::requestFileAsync(const QString& relativePath, FileRequestCal
         .arg(++requestCounter);
 
     // 创建异步请求
-    auto asyncRequest = std::make_unique<AsyncFileRequest>();
+    auto asyncRequest = std::make_shared<AsyncFileRequest>();
     asyncRequest->requestId = requestId;
     asyncRequest->relativePath = relativePath;
     asyncRequest->callback = callback;
@@ -596,7 +596,7 @@ void ClientHandler::requestFileAsync(const QString& relativePath, FileRequestCal
     asyncRequest->timeoutTimer->start(timeoutMs);
 
     // 保存请求
-    asyncRequests_[requestId] = std::move(asyncRequest);
+    asyncRequests_[requestId] = asyncRequest;
 
     // 发送文件请求
     nlohmann::json request;
