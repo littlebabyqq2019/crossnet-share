@@ -409,6 +409,7 @@ void Client::handleDownloadRequest(const nlohmann::json& payload) {
 
         // 发送下载响应
         nlohmann::json response;
+        response["relativePath"] = relativePath.toStdString();
         response["filename"] = fileInfo.fileName().toStdString();
         response["size"] = fileInfo.size();
         sendMessage(MessageType::DOWNLOAD_RESPONSE, response);
@@ -418,6 +419,7 @@ void Client::handleDownloadRequest(const nlohmann::json& payload) {
         while (!file.atEnd()) {
             QByteArray chunk = file.read(chunkSize);
             nlohmann::json dataMsg;
+            dataMsg["relativePath"] = relativePath.toStdString();
             dataMsg["data"] = chunk.toBase64().toStdString();
             sendMessage(MessageType::FILE_DATA, dataMsg);
         }
@@ -426,6 +428,7 @@ void Client::handleDownloadRequest(const nlohmann::json& payload) {
 
         // 发送完成消息
         nlohmann::json completeMsg;
+        completeMsg["relativePath"] = relativePath.toStdString();
         completeMsg["success"] = true;
         sendMessage(MessageType::FILE_COMPLETE, completeMsg);
 

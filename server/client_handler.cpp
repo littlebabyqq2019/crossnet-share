@@ -143,55 +143,64 @@ void ClientHandler::handleMessage(MessageType type, const nlohmann::json& payloa
 
     // 检查是否是异步文件请求的响应
     if (asyncRequest_ && !asyncRequest_->completed) {
-        if (type == MessageType::DOWNLOAD_RESPONSE) {
-            // 文件开始传输，清空缓冲区
-            asyncRequest_->data.clear();
-            return;
-        } else if (type == MessageType::FILE_DATA) {
-            // 积累文件数据
-            try {
-                std::string dataBase64 = payload["data"].get<std::string>();
-                QByteArray chunk = QByteArray::fromBase64(QByteArray::fromStdString(dataBase64));
-                asyncRequest_->data.append(chunk);
-            } catch (...) {
+        // 验证 relativePath 是否匹配
+        QString responsePath;
+        if (payload.contains("relativePath")) {
+            responsePath = QString::fromStdString(payload["relativePath"].get<std::string>());
+        }
+
+        // 只有 relativePath 匹配才处理
+        if (responsePath == asyncRequest_->relativePath) {
+            if (type == MessageType::DOWNLOAD_RESPONSE) {
+                // 文件开始传输，清空缓冲区
+                asyncRequest_->data.clear();
+                return;
+            } else if (type == MessageType::FILE_DATA) {
+                // 积累文件数据
+                try {
+                    std::string dataBase64 = payload["data"].get<std::string>();
+                    QByteArray chunk = QByteArray::fromBase64(QByteArray::fromStdString(dataBase64));
+                    asyncRequest_->data.append(chunk);
+                } catch (...) {
+                    asyncRequest_->completed = true;
+                    FileRequestResult result;
+                    result.success = false;
+                    result.error = "Failed to decode file data";
+
+                    auto callback = asyncRequest_->callback;
+                    asyncRequest_->timeoutTimer->stop();
+                    asyncRequest_.reset();
+
+                    callback(result);
+                }
+                return;
+            } else if (type == MessageType::FILE_COMPLETE) {
+                // 文件传输完成
                 asyncRequest_->completed = true;
                 FileRequestResult result;
-                result.success = false;
-                result.error = "Failed to decode file data";
+                result.success = true;
+                result.data = asyncRequest_->data;
 
                 auto callback = asyncRequest_->callback;
                 asyncRequest_->timeoutTimer->stop();
                 asyncRequest_.reset();
 
                 callback(result);
+                return;
+            } else if (type == MessageType::ERROR_MESSAGE) {
+                // 错误
+                asyncRequest_->completed = true;
+                FileRequestResult result;
+                result.success = false;
+                result.error = QString::fromStdString(payload.value("error", "Unknown error"));
+
+                auto callback = asyncRequest_->callback;
+                asyncRequest_->timeoutTimer->stop();
+                asyncRequest_.reset();
+
+                callback(result);
+                return;
             }
-            return;
-        } else if (type == MessageType::FILE_COMPLETE) {
-            // 文件传输完成
-            asyncRequest_->completed = true;
-            FileRequestResult result;
-            result.success = true;
-            result.data = asyncRequest_->data;
-
-            auto callback = asyncRequest_->callback;
-            asyncRequest_->timeoutTimer->stop();
-            asyncRequest_.reset();
-
-            callback(result);
-            return;
-        } else if (type == MessageType::ERROR_MESSAGE) {
-            // 错误
-            asyncRequest_->completed = true;
-            FileRequestResult result;
-            result.success = false;
-            result.error = QString::fromStdString(payload.value("error", "Unknown error"));
-
-            auto callback = asyncRequest_->callback;
-            asyncRequest_->timeoutTimer->stop();
-            asyncRequest_.reset();
-
-            callback(result);
-            return;
         }
     }
 
