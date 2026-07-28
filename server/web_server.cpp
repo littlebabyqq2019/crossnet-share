@@ -430,8 +430,8 @@ void WebServer::handleFileList(QTcpSocket* socket, const HttpRequest& request) {
         nlohmann::json item = Protocol::fileMetadataToJson(file);
         item["id"] = fileId(file).toStdString();
         item["humanSize"] = humanSize(file.size).toStdString();
-        item["previewSupported"] = DocumentConverter::isPreviewSupported(
-            indexer_->resolveFilePath(QString::fromStdString(file.ownerClient), QString::fromStdString(file.relativePath)));
+        // 直接从文件名判断预览支持，避免每次都解析完整路径
+        item["previewSupported"] = DocumentConverter::isPreviewSupported(QString::fromStdString(file.relativePath));
         root["files"].push_back(item);
     }
 
