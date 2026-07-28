@@ -592,11 +592,6 @@ void WebServer::handleBatchDownload(QTcpSocket* socket, const HttpRequest& reque
     }
 
     // 使用异步方式收集所有文件
-    struct FileInfo {
-        QString tempPath;
-        QString fileName;
-    };
-
     auto filePaths = std::make_shared<QList<FileInfo>>();
     auto pendingCount = std::make_shared<int>(0);
     QPointer<QTcpSocket> socketPtr(socket);
@@ -949,8 +944,6 @@ void WebServer::handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& r
 
     // 异步请求客户端发送文件数据
     QPointer<QTcpSocket> socketPtr(socket);
-    QString username;
-    isAuthenticated(request, username);
 
     handler->requestFileAsync(filePath, [this, socketPtr, filePath, username](bool success, const QByteArray& data, const QString& error) {
         if (!socketPtr) {
