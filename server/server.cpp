@@ -11,15 +11,9 @@ Server::Server(QObject* parent)
     : QObject(parent)
     , running_(false)
     , fileWatcher_(new FileWatcher(this))
-    , webServer_(nullptr)
-    , webServerThread_(new QThread(this))
+    , webServer_(new WebServer(&indexer_, this))
     , authManager_(new AuthManager(this))
 {
-    // 在独立线程中创建WebServer
-    webServer_ = new WebServer(&indexer_);
-    webServer_->moveToThread(webServerThread_);
-    webServerThread_->start();
-
     webServer_->setAuthManager(authManager_);
     webServer_->setServer(this);
     authManager_->loadUsers(QCoreApplication::applicationDirPath() + "/users.json");
@@ -36,18 +30,6 @@ Server::Server(QObject* parent)
 
 Server::~Server() {
     stop();
-
-    // 停止WebServer线程
-    if (webServerThread_->isRunning()) {
-        webServerThread_->quit();
-        webServerThread_->wait();
-    }
-
-    // 删除webServer_（它不是this的子对象）
-    if (webServer_) {
-        delete webServer_;
-        webServer_ = nullptr;
-    }
 
     // 保存审计日志
     QString auditLogPath = QCoreApplication::applicationDirPath() + "/audit_log.json";
@@ -92,14 +74,9 @@ bool Server::start(const ServerConfig& config) {
         emit logMessage("Listening on " + address.toString() + ":" + QString::number(config_.port));
     }
 
-    // 启动Web服务器（在独立线程中）
+    // 启动Web服务器
     if (config_.webEnabled) {
-        bool webStarted = false;
-        QMetaObject::invokeMethod(webServer_, "start", Qt::BlockingQueuedConnection,
-                                  Q_RETURN_ARG(bool, webStarted),
-                                  Q_ARG(quint16, config_.webPort));
-
-        if (webStarted) {
+        if (webServer_->start(config_.webPort)) {
             emit logMessage("Web access: http://0.0.0.0:" + QString::number(config_.webPort));
         } else {
             emit logMessage("Warning: Web server failed to start on port " + QString::number(config_.webPort));
@@ -118,9 +95,9 @@ void Server::stop() {
         return;
     }
 
-    // 停止Web服务器（在独立线程中）
+    // 停止Web服务器
     if (webServer_) {
-        QMetaObject::invokeMethod(webServer_, "stop", Qt::BlockingQueuedConnection);
+        webServer_->stop();
     }
 
     // 停止文件监控

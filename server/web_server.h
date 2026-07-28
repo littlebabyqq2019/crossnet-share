@@ -40,16 +40,15 @@ public:
     explicit WebServer(FileIndexer* indexer, QObject* parent = nullptr);
     ~WebServer();
 
+    bool start(quint16 port = 8080);
+    void stop();
+
     bool isRunning() const { return running_; }
     quint16 getPort() const { return port_; }
 
     void setAuthManager(AuthManager* authManager);
     void setServer(Server* server);
     void setWatermarkService(WatermarkService* watermarkService);
-
-public slots:
-    bool start(quint16 port = 8080);
-    void stop();
 
 signals:
     void started();
