@@ -43,6 +43,11 @@ private:
     static bool isCacheValid(const QString& cachePath, const QString& originalPath);
 
 #ifdef Q_OS_WIN
+    // 检查 wordApp 是否仍然可用，如果失效则重新创建。
+    // 调用前必须已持有 wordMutex 锁。
+    static bool ensureWordAppReady();
+    static void restartWordApp();
+
     static QAxObject* wordApp;
     static QMutex wordMutex;
 #endif
