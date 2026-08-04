@@ -12,8 +12,15 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #ifdef Q_OS_WIN
 #include <QAxObject>
+#include <windows.h>
+#include <tlhelp32.h>
 #endif
 
 namespace CrossNetShare {
@@ -89,7 +96,9 @@ void DocumentConverter::cleanup() {
 #ifdef Q_OS_WIN
     QMutexLocker locker(&wordMutex);
     if (wordApp) {
-        wordApp->dynamicCall("Quit()");
+        runWordActionWithWatchdog([]() {
+            DocumentConverter::wordApp->dynamicCall("Quit()");
+        });
         delete wordApp;
         wordApp = nullptr;
     }
@@ -99,11 +108,18 @@ void DocumentConverter::cleanup() {
 #ifdef Q_OS_WIN
 void DocumentConverter::restartWordApp() {
     if (wordApp) {
-        // 旧对象可能已经处于异常状态，尝试静默退出并释放，忽略任何失败
-        wordApp->dynamicCall("Quit()");
+        // 旧对象可能已经处于异常状态。Quit() 本身也可能挂死，
+        // 因此同样放在看门狗保护下执行，忽略任何失败。
+        runWordActionWithWatchdog([]() {
+            DocumentConverter::wordApp->dynamicCall("Quit()");
+        });
         delete wordApp;
         wordApp = nullptr;
     }
+
+    // 强杀残留的 WINWORD.EXE 进程，确保接下来创建的是一个全新、干净的实例，
+    // 不会意外附着到一个仍处于异常状态的旧进程上。
+    killWordProcess();
 
     wordApp = new QAxObject("Word.Application");
     if (!wordApp->isNull()) {
@@ -124,17 +140,88 @@ bool DocumentConverter::ensureWordAppReady() {
     // 通过访问 Documents 集合来验证底层 COM 连接是否仍然存活。
     // Word 长时间运行后可能进入异常状态（进程假死、被系统回收等），
     // wordApp->isNull() 无法检测到这种情况，只能靠实际调用来试探。
-    QAxObject* documents = wordApp->querySubObject("Documents");
-    bool alive = documents != nullptr;
-    delete documents;
+    bool alive = false;
+    bool watchdogOk = runWordActionWithWatchdog([&alive]() {
+        QAxObject* documents = DocumentConverter::wordApp->querySubObject("Documents");
+        alive = documents != nullptr;
+        delete documents;
+    });
 
-    if (!alive) {
+    if (!watchdogOk || !alive || !wordApp || wordApp->isNull()) {
         qDebug() << "[DocumentConverter] Word COM connection appears dead, restarting Word.Application";
         restartWordApp();
         return wordApp && !wordApp->isNull();
     }
 
     return true;
+}
+
+void DocumentConverter::killWordProcess() {
+    // 只终止 WINWORD.EXE 进程本身，绝不在这里触碰 wordApp 指针——
+    // 该指针始终只由持有 wordMutex 的调用线程管理，避免两个线程
+    // 同时操作/释放同一个 QAxObject 造成的数据竞争。
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    PROCESSENTRY32 entry;
+    entry.dwSize = sizeof(PROCESSENTRY32);
+
+    if (Process32First(snapshot, &entry)) {
+        do {
+            if (_wcsicmp(entry.szExeFile, L"WINWORD.EXE") == 0) {
+                HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
+                if (process) {
+                    TerminateProcess(process, 1);
+                    CloseHandle(process);
+                }
+            }
+        } while (Process32Next(snapshot, &entry));
+    }
+
+    CloseHandle(snapshot);
+}
+
+bool DocumentConverter::runWordActionWithWatchdog(const std::function<void()>& action, int timeoutMs) {
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    auto killedByWatchdog = std::make_shared<std::atomic<bool>>(false);
+    auto mutex = std::make_shared<std::mutex>();
+    auto cv = std::make_shared<std::condition_variable>();
+
+    // action 始终在当前线程（持有 wordMutex 的调用线程）同步执行；
+    // 看门狗线程只负责计时和在超时后强杀 WINWORD.EXE 进程本身。
+    // 一旦目标进程被杀死，卡在 IDispatch::Invoke 里的 COM RPC 调用会因为
+    // 服务端进程消失而返回错误，从而让 action() 在调用线程上正常返回，
+    // 而不是永久阻塞——这样就不会有两个线程同时访问同一个 QAxObject。
+    std::thread watchdog([done, killedByWatchdog, mutex, cv, timeoutMs]() {
+        std::unique_lock<std::mutex> lock(*mutex);
+        if (!cv->wait_for(lock, std::chrono::milliseconds(timeoutMs), [done]() { return done->load(); })) {
+            qDebug() << "[DocumentConverter] Word COM call exceeded" << timeoutMs << "ms, force-killing WINWORD.EXE";
+            killedByWatchdog->store(true);
+            DocumentConverter::killWordProcess();
+        }
+    });
+
+    action();
+
+    {
+        std::lock_guard<std::mutex> lock(*mutex);
+        done->store(true);
+    }
+    cv->notify_all();
+    watchdog.join();
+
+    if (killedByWatchdog->load()) {
+        // 进程已被强杀，wordApp 包装的 COM 连接必然失效。
+        // 此刻已经脱离 action() 的执行、回到调用线程的正常控制流，
+        // 在这里安全地丢弃旧指针，避免悬挂引用。
+        delete wordApp;
+        wordApp = nullptr;
+        return false;
+    }
+
+    return wordApp && !wordApp->isNull();
 }
 #endif
 
@@ -297,12 +384,17 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
     QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
     QString nativePdfPath = QDir::toNativeSeparators(pdfPath);
 
-    QAxObject* documents = wordApp->querySubObject("Documents");
+    QAxObject* documents = nullptr;
+    runWordActionWithWatchdog([&]() {
+        documents = wordApp->querySubObject("Documents");
+    });
     if (!documents) {
         // 再尝试一次重启后重试，应对 Documents 集合突然失效的情况
         restartWordApp();
         if (wordApp && !wordApp->isNull()) {
-            documents = wordApp->querySubObject("Documents");
+            runWordActionWithWatchdog([&]() {
+                documents = wordApp->querySubObject("Documents");
+            });
         }
     }
     if (!documents) {
@@ -311,9 +403,19 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
         return result;
     }
 
-    QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
-        nativeInputPath, false, true, false);
+    QAxObject* document = nullptr;
+    bool timedOut = !runWordActionWithWatchdog([&]() {
+        document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
+            nativeInputPath, false, true, false);
+    });
     delete documents;
+
+    if (timedOut) {
+        delete document;
+        result.success = false;
+        result.error = "Microsoft Word became unresponsive while opening the document";
+        return result;
+    }
 
     if (!document) {
         result.success = false;
@@ -321,11 +423,18 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
         return result;
     }
 
-    document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
-        nativePdfPath, 17);
-
-    document->dynamicCall("Close(bool)", false);
+    timedOut = !runWordActionWithWatchdog([&]() {
+        document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
+            nativePdfPath, 17);
+        document->dynamicCall("Close(bool)", false);
+    });
     delete document;
+
+    if (timedOut) {
+        result.success = false;
+        result.error = "Microsoft Word became unresponsive while exporting the document";
+        return result;
+    }
 
     QFile pdfFile(pdfPath);
     if (!pdfFile.open(QIODevice::ReadOnly)) {
@@ -519,12 +628,17 @@ QString DocumentConverter::convertWordToJpg(const QString& filePath, const QStri
     QString outputPath = outputDir + "/" + baseName + ".png";
     QString nativeOutputPath = QDir::toNativeSeparators(outputPath);
 
-    QAxObject* documents = wordApp->querySubObject("Documents");
+    QAxObject* documents = nullptr;
+    runWordActionWithWatchdog([&]() {
+        documents = wordApp->querySubObject("Documents");
+    });
     if (!documents) {
         // 再尝试一次重启后重试
         restartWordApp();
         if (wordApp && !wordApp->isNull()) {
-            documents = wordApp->querySubObject("Documents");
+            runWordActionWithWatchdog([&]() {
+                documents = wordApp->querySubObject("Documents");
+            });
         }
     }
     if (!documents) {
@@ -532,9 +646,18 @@ QString DocumentConverter::convertWordToJpg(const QString& filePath, const QStri
         return QString();
     }
 
-    QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
-        nativeInputPath, false, true, false);
+    QAxObject* document = nullptr;
+    bool timedOut = !runWordActionWithWatchdog([&]() {
+        document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
+            nativeInputPath, false, true, false);
+    });
     delete documents;
+
+    if (timedOut) {
+        delete document;
+        qDebug() << "Microsoft Word became unresponsive while opening the document";
+        return QString();
+    }
 
     if (!document) {
         qDebug() << "Failed to open document in Word";
@@ -545,11 +668,17 @@ QString DocumentConverter::convertWordToJpg(const QString& filePath, const QStri
     QString tempPdfPath = outputDir + "/" + baseName + "_temp.pdf";
     QString nativeTempPdfPath = QDir::toNativeSeparators(tempPdfPath);
 
-    document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
-        nativeTempPdfPath, 17);
-
-    document->dynamicCall("Close(bool)", false);
+    timedOut = !runWordActionWithWatchdog([&]() {
+        document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
+            nativeTempPdfPath, 17);
+        document->dynamicCall("Close(bool)", false);
+    });
     delete document;
+
+    if (timedOut) {
+        qDebug() << "Microsoft Word became unresponsive while exporting the document";
+        return QString();
+    }
 
     if (!QFile::exists(tempPdfPath)) {
         qDebug() << "Failed to generate PDF";
