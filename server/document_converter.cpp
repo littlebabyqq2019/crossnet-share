@@ -170,7 +170,7 @@ void DocumentConverter::killWordProcess() {
 
     if (Process32First(snapshot, &entry)) {
         do {
-            if (_wcsicmp(entry.szExeFile, L"WINWORD.EXE") == 0) {
+            if (_stricmp(entry.szExeFile, "WINWORD.EXE") == 0) {
                 HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
                 if (process) {
                     TerminateProcess(process, 1);
