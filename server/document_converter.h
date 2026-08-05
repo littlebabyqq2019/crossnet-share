@@ -29,9 +29,7 @@ private:
     static PreviewResult previewImage(const QString& filePath);
     static PreviewResult previewPdf(const QString& filePath);
     static PreviewResult previewWord(const QString& filePath);
-    static PreviewResult convertWordWithLibreOffice(const QString& filePath);
     static PreviewResult convertWordWithMicrosoftWord(const QString& filePath);
-    static QString findLibreOffice();
     static QByteArray htmlEscape(const QString& text);
 
     static QString getCachePath(const QString& filePath);

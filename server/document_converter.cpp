@@ -5,12 +5,8 @@
 #include <QFileInfo>
 #include <QMap>
 #include <QProcess>
-#include <QProcessEnvironment>
-#include <QSettings>
-#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextCodec>
-#include <QUrl>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
@@ -20,60 +16,16 @@ namespace CrossNetShare {
 
 namespace {
 
-void addLibreOfficeCandidate(QStringList& candidates, const QString& candidate) {
-    QString path = QDir::fromNativeSeparators(candidate.trimmed());
-    if (path.isEmpty()) {
-        return;
-    }
-    if (path.size() >= 2 && path.startsWith('"') && path.endsWith('"')) {
-        path = path.mid(1, path.size() - 2);
-    }
-
-    QFileInfo info(path);
-    QStringList paths;
-    if (info.isDir()) {
-        paths << path + "/soffice.exe" << path + "/program/soffice.exe" << path + "/soffice" << path + "/program/soffice";
-    } else {
-        paths << path;
-    }
-
-    for (const QString& item : paths) {
-        QString clean = QDir::cleanPath(item);
-        if (!clean.isEmpty() && !candidates.contains(clean, Qt::CaseInsensitive)) {
-            candidates << clean;
-        }
-    }
-}
-
-QString processDetails(QProcess& process) {
-    QStringList details;
-    QString stdoutText = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
-    QString stderrText = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
-
-    if (!stdoutText.isEmpty()) {
-        details << "stdout: " + stdoutText;
-    }
-    if (!stderrText.isEmpty()) {
-        details << "stderr: " + stderrText;
-    }
-
-    return details.join('\n');
-}
-
-QString withDetails(const QString& message, const QString& details) {
-    return details.isEmpty() ? message : message + "\n" + details;
-}
-
 #ifdef Q_OS_WIN
 // Word 的自动化接口本质上是一个进程外 COM 服务器（WINWORD.EXE）。之前两次
 // "进程内隔离"的尝试——看门狗强杀 WINWORD.EXE、把 COM 调用挪到服务端进程内
-// 的专用线程——实测都会在 Word 假死/崇溃时导致服务端主进程本身毫无提示地
+// 的专用线程——实测都会在 Word 假死/崩溃时导致服务端主进程本身毫无提示地
 // 整体消失：只要 COM 调用发生在服务端自己的进程地址空间内，一次跨进程 RPC
 // 失联就可能以未处理的结构化异常波及整个进程，任何线程级隔离都无法根治。
 //
 // 真正安全的隔离是进程级的：把"打开 Word 文档→导出 PDF"这个操作整个放进一个
 // 独立的辅助程序 CrossNetShareWordHelper.exe（见 server/word_pdf_helper.cpp）
-// 里执行。服务端通过 QProcess 启动它、限时等待其退出；无论它卡死、崇溃还是
+// 里执行。服务端通过 QProcess 启动它、限时等待其退出；无论它卡死、崩溃还是
 // 被服务端强制终止，都只影响这一个独立的子进程，操作系统保证不会波及服务端
 // 主进程的任何线程或状态。
 QString wordHelperExecutablePath() {
@@ -257,28 +209,8 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
             cacheFile.write(wordResult.data);
             cacheFile.close();
         }
-        return wordResult;
     }
-
-    QFile checkFile(filePath);
-    if (checkFile.open(QIODevice::ReadOnly)) {
-        QByteArray header = checkFile.read(512);
-        if (header.contains("<?xml") && header.contains("wordDocument")) {
-            return wordResult;
-        }
-    }
-
-    PreviewResult libreOfficeResult = convertWordWithLibreOffice(filePath);
-    if (libreOfficeResult.success) {
-        QFile cacheFile(cachePath);
-        if (cacheFile.open(QIODevice::WriteOnly)) {
-            cacheFile.write(libreOfficeResult.data);
-            cacheFile.close();
-        }
-    } else if (!wordResult.error.isEmpty()) {
-        libreOfficeResult.error = "Microsoft Word conversion failed: " + wordResult.error + "\nLibreOffice fallback failed: " + libreOfficeResult.error;
-    }
-    return libreOfficeResult;
+    return wordResult;
 }
 
 DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord(const QString& filePath) {
@@ -320,121 +252,6 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
     result.data = pdfFile.readAll();
     return result;
 #endif
-}
-
-DocumentConverter::PreviewResult DocumentConverter::convertWordWithLibreOffice(const QString& filePath) {
-    PreviewResult result;
-    QString libreOffice = findLibreOffice();
-    if (libreOffice.isEmpty()) {
-        result.success = false;
-        result.error = "LibreOffice not found on server. Install LibreOffice on computer A and ensure soffice.exe can be found.";
-        return result;
-    }
-
-    QTemporaryDir tempDir(QDir::temp().filePath("crossnet_preview_XXXXXX"));
-    if (!tempDir.isValid()) {
-        result.success = false;
-        result.error = "Failed to create temporary conversion directory";
-        return result;
-    }
-
-    QTemporaryDir profileDir(QDir::temp().filePath("crossnet_lo_profile_XXXXXX"));
-    if (!profileDir.isValid()) {
-        result.success = false;
-        result.error = "Failed to create temporary LibreOffice profile";
-        return result;
-    }
-
-    QProcess process;
-    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
-    environment.insert("SAL_USE_VCLPLUGIN", "svp");
-    process.setProcessEnvironment(environment);
-    process.setWorkingDirectory(tempDir.path());
-
-    QStringList args;
-    args << "--headless"
-         << "--invisible"
-         << "--nologo"
-         << "--nofirststartwizard"
-         << "--nodefault"
-         << "--nolockcheck"
-         << "-env:UserInstallation=" + QUrl::fromLocalFile(profileDir.path()).toString()
-         << "--convert-to"
-         << "pdf"
-         << "--outdir"
-         << tempDir.path()
-         << filePath;
-
-    process.start(libreOffice, args);
-    if (!process.waitForStarted(10000)) {
-        result.success = false;
-        result.error = "Failed to start LibreOffice: " + process.errorString();
-        return result;
-    }
-
-    if (!process.waitForFinished(60000)) {
-        process.kill();
-        process.waitForFinished(5000);
-        result.success = false;
-        result.error = withDetails("LibreOffice conversion timed out", processDetails(process));
-        return result;
-    }
-
-    QString details = processDetails(process);
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        result.success = false;
-        result.error = withDetails(QString("LibreOffice conversion failed with exit code %1").arg(process.exitCode()), details);
-        return result;
-    }
-
-    QString pdfPath = tempDir.path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf";
-    QFile pdfFile(pdfPath);
-    if (!pdfFile.open(QIODevice::ReadOnly)) {
-        QStringList generatedFiles = QDir(tempDir.path()).entryList(QDir::Files | QDir::NoDotAndDotDot);
-        result.success = false;
-        result.error = withDetails("Converted PDF file not found", "Generated files: " + generatedFiles.join(", ") + (details.isEmpty() ? QString() : "\n" + details));
-        return result;
-    }
-
-    result.success = true;
-    result.mimeType = "application/pdf";
-    result.data = pdfFile.readAll();
-    return result;
-}
-
-QString DocumentConverter::findLibreOffice() {
-    QStringList candidates;
-    QString found = QStandardPaths::findExecutable("soffice");
-    if (!found.isEmpty()) {
-        return found;
-    }
-
-    addLibreOfficeCandidate(candidates, qEnvironmentVariable("PROGRAMFILES") + "/LibreOffice/program/soffice.exe");
-    addLibreOfficeCandidate(candidates, qEnvironmentVariable("PROGRAMFILES(X86)") + "/LibreOffice/program/soffice.exe");
-    addLibreOfficeCandidate(candidates, qEnvironmentVariable("PROGRAMW6432") + "/LibreOffice/program/soffice.exe");
-    addLibreOfficeCandidate(candidates, "C:/Program Files/LibreOffice/program/soffice.exe");
-    addLibreOfficeCandidate(candidates, "C:/Program Files (x86)/LibreOffice/program/soffice.exe");
-
-#ifdef Q_OS_WIN
-    const QStringList registryKeys = {
-        "HKEY_LOCAL_MACHINE\\SOFTWARE\\LibreOffice\\UNO\\InstallPath",
-        "HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\LibreOffice\\UNO\\InstallPath",
-        "HKEY_CURRENT_USER\\SOFTWARE\\LibreOffice\\UNO\\InstallPath"
-    };
-
-    for (const QString& key : registryKeys) {
-        QSettings settings(key, QSettings::NativeFormat);
-        addLibreOfficeCandidate(candidates, settings.value(".").toString());
-    }
-#endif
-
-    for (const QString& candidate : candidates) {
-        if (QFileInfo::exists(candidate)) {
-            return candidate;
-        }
-    }
-
-    return QString();
 }
 
 QByteArray DocumentConverter::htmlEscape(const QString& text) {

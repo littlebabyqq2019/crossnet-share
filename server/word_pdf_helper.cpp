@@ -21,6 +21,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QTimer>
 #include <windows.h>
 #include <shellapi.h>
 
@@ -32,47 +33,68 @@ int main(int argc, char* argv[]) {
     // 原始宽字符命令行重新解析参数，确保任意 Unicode 路径都能被正确还原。
     int wargc = 0;
     LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
-    if (!wargv || wargc < 3) {
-        if (wargv) LocalFree(wargv);
+    QString inputPath;
+    QString outputPdfPath;
+    bool argsOk = wargv && wargc >= 3;
+    if (argsOk) {
+        inputPath = QString::fromWCharArray(wargv[1]);
+        outputPdfPath = QString::fromWCharArray(wargv[2]);
+    }
+    if (wargv) {
+        LocalFree(wargv);
+    }
+    if (!argsOk) {
         return 1; // 参数不足
     }
 
-    QString inputPath = QString::fromWCharArray(wargv[1]);
-    QString outputPdfPath = QString::fromWCharArray(wargv[2]);
-    LocalFree(wargv);
+    // 关键：Word 自动化调用必须在事件循环已经运行起来之后才发起，不能像
+    // 之前那样在 app.exec() 之前于 main() 里同步调用。Word 是进程外 COM
+    // 服务器，在执行较慢操作（比如 ExportAsFixedFormat 导出较大文档）时，
+    // 可能通过 COM 消息过滤器/重入回调与发起调用的 STA 线程通信，这要求该
+    // 线程此刻有一个正在运行的消息循环来处理这些往返消息。如果没有消息
+    // 循环在跑，这类回调可能找不到出路，导致底层 OLE/RPC 层抛出一个无法
+    // 被捕获的结构化异常，表现为本进程直接崩溃退出——这正是实测观察到的
+    // "process crashed" 现象的根源。用 QTimer::singleShot(0, ...) 把实际
+    // 工作推迟到 exec() 内部执行，就能保证调用发生时消息循环确实在运行。
+    QTimer::singleShot(0, &app, [&app, inputPath, outputPdfPath]() {
+        QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(inputPath).absoluteFilePath());
+        QString nativeOutputPath = QDir::toNativeSeparators(QFileInfo(outputPdfPath).absoluteFilePath());
 
-    QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(inputPath).absoluteFilePath());
-    QString nativeOutputPath = QDir::toNativeSeparators(QFileInfo(outputPdfPath).absoluteFilePath());
+        QAxObject wordApp("Word.Application");
+        if (wordApp.isNull()) {
+            app.exit(2); // 无法启动/连接 Microsoft Word
+            return;
+        }
+        wordApp.setProperty("Visible", false);
+        wordApp.setProperty("DisplayAlerts", 0);
 
-    QAxObject wordApp("Word.Application");
-    if (wordApp.isNull()) {
-        return 2; // 无法启动/连接 Microsoft Word
-    }
-    wordApp.setProperty("Visible", false);
-    wordApp.setProperty("DisplayAlerts", 0);
+        QAxObject* documents = wordApp.querySubObject("Documents");
+        if (!documents) {
+            wordApp.dynamicCall("Quit()");
+            app.exit(3); // 无法访问 Documents 集合
+            return;
+        }
 
-    QAxObject* documents = wordApp.querySubObject("Documents");
-    if (!documents) {
+        QAxObject* document = documents->querySubObject(
+            "Open(const QString&, bool, bool, bool)",
+            nativeInputPath, false, true, false);
+        delete documents;
+
+        if (!document) {
+            wordApp.dynamicCall("Quit()");
+            app.exit(4); // 打开文档失败
+            return;
+        }
+
+        // 17 = wdExportFormatPDF
+        document->dynamicCall("ExportAsFixedFormat(const QString&, int)", nativeOutputPath, 17);
+        document->dynamicCall("Close(bool)", false);
+        delete document;
+
         wordApp.dynamicCall("Quit()");
-        return 3; // 无法访问 Documents 集合
-    }
 
-    QAxObject* document = documents->querySubObject(
-        "Open(const QString&, bool, bool, bool)",
-        nativeInputPath, false, true, false);
-    delete documents;
+        app.exit(QFile::exists(outputPdfPath) ? 0 : 5); // 5 = 导出后未生成 PDF 文件
+    });
 
-    if (!document) {
-        wordApp.dynamicCall("Quit()");
-        return 4; // 打开文档失败
-    }
-
-    // 17 = wdExportFormatPDF
-    document->dynamicCall("ExportAsFixedFormat(const QString&, int)", nativeOutputPath, 17);
-    document->dynamicCall("Close(bool)", false);
-    delete document;
-
-    wordApp.dynamicCall("Quit()");
-
-    return QFile::exists(outputPdfPath) ? 0 : 5; // 5 = 导出后未生成 PDF 文件
+    return app.exec();
 }
