@@ -32,6 +32,21 @@ QString wordHelperExecutablePath() {
     return QDir(QCoreApplication::applicationDirPath()).filePath("CrossNetShareWordHelper.exe");
 }
 
+// 读取辅助进程写入的逐步执行日志（见 server/word_pdf_helper.cpp 中的
+// logStep()），用于在报错信息里直接暴露它具体执行到了哪一步、卡在哪一步。
+// 每次调用后清空文件，避免把上一次运行的日志和本次的混在一起。
+QString takeWordHelperLog() {
+    QString logPath = QDir::temp().filePath("crossnet_word_helper.log");
+    QFile logFile(logPath);
+    QString content;
+    if (logFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        content = QString::fromUtf8(logFile.readAll());
+        logFile.close();
+    }
+    QFile::remove(logPath);
+    return content;
+}
+
 // 启动辅助进程转换一次文档，最多等待 timeoutMs。
 // 返回值：true 表示辅助进程在超时前正常退出（具体成功/失败还要看 errorOut
 // 和调用方对输出文件的检查）；false 表示超时，此时会强制终止这个独立子进程
@@ -43,6 +58,9 @@ bool runWordHelperProcess(const QString& inputPath, const QString& outputPdfPath
         errorOut = "CrossNetShareWordHelper.exe not found next to the server executable";
         return false;
     }
+
+    // 清掉上一次运行残留的日志，确保下面读到的是本次运行产生的内容。
+    takeWordHelperLog();
 
     QProcess process;
     process.start(helperPath, {inputPath, outputPdfPath});
@@ -56,12 +74,14 @@ bool runWordHelperProcess(const QString& inputPath, const QString& outputPdfPath
                   << "ms, killing it (server process is unaffected)";
         process.kill();
         process.waitForFinished(5000);
-        errorOut = "Microsoft Word became unresponsive while converting the document";
+        errorOut = "Microsoft Word became unresponsive while converting the document\nSteps log:\n" + takeWordHelperLog();
         return false;
     }
 
+    QString stepsLog = takeWordHelperLog();
+
     if (process.exitStatus() != QProcess::NormalExit) {
-        errorOut = "Word helper process crashed";
+        errorOut = "Word helper process crashed\nSteps log:\n" + stepsLog;
         return false;
     }
 
@@ -74,7 +94,8 @@ bool runWordHelperProcess(const QString& inputPath, const QString& outputPdfPath
             {4, "Failed to open the document"},
             {5, "Word did not generate a PDF file"},
         };
-        errorOut = "Word helper process failed: " + exitCodeMeanings.value(exitCode, "Unknown error " + QString::number(exitCode));
+        errorOut = "Word helper process failed: " + exitCodeMeanings.value(exitCode, "Unknown error " + QString::number(exitCode))
+                   + "\nSteps log:\n" + stepsLog;
         return false;
     }
 
