@@ -22,7 +22,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QTextStream>
 #include <QTimer>
 #include <windows.h>
 #include <shellapi.h>
@@ -30,8 +29,8 @@
 namespace {
 
 // 这是一个 WIN32 子系统的 GUI 程序（无控制台），qDebug() 默认只写到调试器，
-// 用户和服务端都看不到。之前两次修复都是在完全看不到本进程内部实际执行到
-// 哪一步的情况下做的猜测——为了不再猜测，把每一步都追加写入一个固定的日志
+// 用户和服务端都看不到。之前的修复都是在完全看不到本进程内部实际执行到
+// 哪一步的情况下做的推断——为了不再猜测，把每一步都追加写入一个固定的日志
 // 文件，下次失败时直接读这个文件就能看到确切死在哪一行。
 QFile* g_logFile = nullptr;
 
@@ -41,10 +40,46 @@ void logStep(const QString& message) {
         g_logFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     }
     if (g_logFile->isOpen()) {
-        QTextStream stream(g_logFile);
-        stream << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz") << " " << message << "\n";
-        stream.flush();
+        // 显式按 UTF-8 写入字节，不依赖 QTextStream 的默认本地区域码页
+        // 编码（在中文 Windows 上通常是 GBK）——服务端用 QString::fromUtf8()
+        // 读取这个文件，两端编码必须一致，否则中文文件名会显示为乱码。
+        QString line = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz") + " " + message + "\n";
+        g_logFile->write(line.toUtf8());
         g_logFile->flush();
+    }
+}
+
+// MSVC 内部用这个"魔术"异常码实现 C++ 的 throw/catch。如果放行到这里的是
+// 这个码，说明是一次真正的 C++ 异常（比如 std::bad_alloc），应该让它继续
+// 按正常的 C++ 异常机制传播，而不是被我们当作硬件异常吞掉、隐藏真实问题。
+int sehExceptionFilter(unsigned int code) {
+    const unsigned int kMsvcCppExceptionCode = 0xE06D7363;
+    if (code == kMsvcCppExceptionCode) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+// 用结构化异常处理（SEH）包裹一次可能触发硬件级异常（例如访问越界）的调用。
+// COM 自动化对象内部的崩溃常以这种方式传播，普通的 C++ try/catch 完全捕获
+// 不到。这样可以把它转化为一次"看得见"的失败：记录异常码并走正常的错误
+// 处理分支退出，而不是被操作系统直接判定为进程崩溃、悄无声息地消失。
+//
+// 返回 true 表示 func() 正常执行完成；返回 false 表示捕获到了一次结构化
+// 异常（exceptionCodeOut 会被设为具体的异常码）。
+//
+// 注意：这个函数本身刻意不包含任何需要栈展开的 C++ 对象（局部 QString 等）
+// ——__try 块所在的函数如果有这类局部对象会触发 MSVC C2712 编译错误。
+// func 是调用方传入的、只捕获简单值/指针的 lambda，它的调用是一次普通的
+// 嵌套函数调用，其内部创建的 C++ 对象位于 func 自己的栈帧里，与此处无关。
+template <typename Func>
+bool runGuarded(Func&& func, unsigned long& exceptionCodeOut) {
+    __try {
+        func();
+        return true;
+    } __except (sehExceptionFilter(GetExceptionCode())) {
+        exceptionCodeOut = static_cast<unsigned long>(GetExceptionCode());
+        return false;
     }
 }
 
@@ -86,50 +121,130 @@ int main(int argc, char* argv[]) {
         QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(inputPath).absoluteFilePath());
         QString nativeOutputPath = QDir::toNativeSeparators(QFileInfo(outputPdfPath).absoluteFilePath());
 
+        unsigned long sehCode = 0;
+
         logStep("creating Word.Application COM object...");
-        QAxObject wordApp("Word.Application");
-        logStep(QString("Word.Application created, isNull=%1").arg(wordApp.isNull()));
-        if (wordApp.isNull()) {
+        QAxObject* wordApp = nullptr;
+        bool ok = runGuarded([&wordApp]() {
+            wordApp = new QAxObject("Word.Application");
+        }, sehCode);
+        if (!ok) {
+            logStep(QString("CRASH: structured exception 0x%1 while creating Word.Application").arg(sehCode, 0, 16));
+            app.exit(9);
+            return;
+        }
+        logStep(QString("Word.Application created, isNull=%1").arg(wordApp->isNull()));
+        if (wordApp->isNull()) {
+            delete wordApp;
             app.exit(2); // 无法启动/连接 Microsoft Word
             return;
         }
-        wordApp.setProperty("Visible", false);
-        wordApp.setProperty("DisplayAlerts", 0);
+        wordApp->setProperty("Visible", false);
+        wordApp->setProperty("DisplayAlerts", 0);
         logStep("Word.Application configured (Visible=false, DisplayAlerts=0)");
 
         logStep("querying Documents collection...");
-        QAxObject* documents = wordApp.querySubObject("Documents");
+        QAxObject* documents = nullptr;
+        ok = runGuarded([&]() {
+            documents = wordApp->querySubObject("Documents");
+        }, sehCode);
+        if (!ok) {
+            logStep(QString("CRASH: structured exception 0x%1 while querying Documents").arg(sehCode, 0, 16));
+            delete wordApp;
+            app.exit(9);
+            return;
+        }
         logStep(QString("Documents collection query returned %1").arg(documents ? "non-null" : "null"));
         if (!documents) {
-            wordApp.dynamicCall("Quit()");
+            wordApp->dynamicCall("Quit()");
+            delete wordApp;
             app.exit(3); // 无法访问 Documents 集合
             return;
         }
 
         logStep("calling Documents.Open(\"" + nativeInputPath + "\")...");
-        QAxObject* document = documents->querySubObject(
-            "Open(const QString&, bool, bool, bool)",
-            nativeInputPath, false, true, false);
-        logStep(QString("Documents.Open returned %1").arg(document ? "non-null" : "null"));
+        QAxObject* document = nullptr;
+        ok = runGuarded([&]() {
+            document = documents->querySubObject(
+                "Open(const QString&, bool, bool, bool)",
+                nativeInputPath, false, true, false);
+        }, sehCode);
         delete documents;
+        if (!ok) {
+            logStep(QString("CRASH: structured exception 0x%1 while opening the document").arg(sehCode, 0, 16));
+            wordApp->dynamicCall("Quit()");
+            delete wordApp;
+            app.exit(9);
+            return;
+        }
+        logStep(QString("Documents.Open returned %1").arg(document ? "non-null" : "null"));
 
         if (!document) {
-            wordApp.dynamicCall("Quit()");
+            wordApp->dynamicCall("Quit()");
+            delete wordApp;
             app.exit(4); // 打开文档失败
             return;
         }
 
+        // Document.ExportAsFixedFormat 的完整参数列表（除末尾 Object 类型的
+        // FixedFormatExtClassPtr 外）。之前只传了前 2 个参数、其余全部依赖
+        // Word 的可选参数默认值——这是通过 IDispatch::Invoke 晚绑定调用该
+        // 方法时一个有据可查的已知隐患：Word 对该方法可选参数的晚绑定处理
+        // 不够健壮，省略参数在某些环境下会导致 Word 自动化层内部崩溃
+        // （与本次实测的崩溃位置完全一致）。显式传入全部参数是文档化的
+        // 规避方式：
+        //   ExportFormat=17 (wdExportFormatPDF)
+        //   OpenAfterExport=false
+        //   OptimizeFor=0   (wdExportOptimizeForPrint)
+        //   Range=0         (wdExportAllDocument)
+        //   From=1, To=1    (Range 为整份文档时被忽略，但仍须提供取值)
+        //   Item=0          (wdExportDocumentContent)
+        //   IncludeDocProps=true
+        //   KeepIRM=true
+        //   CreateBookmarks=0 (wdExportCreateNoBookmarks)
+        //   DocStructureTags=true
+        //   BitmapMissingFonts=true
+        //   UseISO19005_1=false（不强制 PDF/A，保持导出效果与之前一致）
         logStep("calling ExportAsFixedFormat to \"" + nativeOutputPath + "\"...");
-        // 17 = wdExportFormatPDF
-        document->dynamicCall("ExportAsFixedFormat(const QString&, int)", nativeOutputPath, 17);
+        ok = runGuarded([&]() {
+            document->dynamicCall(
+                "ExportAsFixedFormat(const QString&, int, bool, int, int, int, int, int, bool, bool, int, bool, bool, bool)",
+                nativeOutputPath, 17, false, 0, 0, 1, 1, 0, true, true, 0, true, true, false);
+        }, sehCode);
+        if (!ok) {
+            logStep(QString("CRASH: structured exception 0x%1 during ExportAsFixedFormat").arg(sehCode, 0, 16));
+            delete document;
+            delete wordApp;
+            app.exit(9);
+            return;
+        }
         logStep("ExportAsFixedFormat returned, calling Close...");
-        document->dynamicCall("Close(bool)", false);
+
+        ok = runGuarded([&]() {
+            document->dynamicCall("Close(bool)", false);
+        }, sehCode);
+        if (!ok) {
+            logStep(QString("CRASH: structured exception 0x%1 while closing the document").arg(sehCode, 0, 16));
+            delete document;
+            delete wordApp;
+            app.exit(9);
+            return;
+        }
         logStep("Close returned");
         delete document;
 
         logStep("calling Word Quit...");
-        wordApp.dynamicCall("Quit()");
-        logStep("Quit returned");
+        ok = runGuarded([&]() {
+            wordApp->dynamicCall("Quit()");
+        }, sehCode);
+        if (!ok) {
+            logStep(QString("CRASH: structured exception 0x%1 during Quit").arg(sehCode, 0, 16));
+            // 导出很可能已经在 Quit 之前完成，仍按文件是否存在来判定结果，
+            // 不因为退出这一步崩溃就把已经成功的转换判定为失败。
+        } else {
+            logStep("Quit returned");
+        }
+        delete wordApp;
 
         bool pdfExists = QFile::exists(outputPdfPath);
         logStep(QString("PDF exists=%1, exiting with code %2").arg(pdfExists).arg(pdfExists ? 0 : 5));

@@ -93,6 +93,7 @@ bool runWordHelperProcess(const QString& inputPath, const QString& outputPdfPath
             {3, "Failed to access Word Documents collection"},
             {4, "Failed to open the document"},
             {5, "Word did not generate a PDF file"},
+            {9, "Microsoft Word raised a structured exception during automation (see steps log for which call)"},
         };
         errorOut = "Word helper process failed: " + exitCodeMeanings.value(exitCode, "Unknown error " + QString::number(exitCode))
                    + "\nSteps log:\n" + stepsLog;
