@@ -23,6 +23,14 @@ jobs:
         target: 'desktop'
         arch: 'win64_msvc2019_64'
         cache: false
+        # jurplel/install-qt-action@v3 默认的 py7zrversion 是 ==0.20.*，这个
+        # py7zr 版本在 Windows 上解压某些 7z 包时不稳定，会抛出
+        # py7zr.exceptions.Bad7zFile（连续三次失败分别报告 translations、
+        # Qt5AxContainer、QtANGLE 路径损坏，实际是同一个根因）。上游项目后来
+        # 的版本已经把默认值改成了 ==1.1.0 作为规避（提交说明："use an older
+        # version as a workaround for Bad7zFile on Windows"），这里显式指定
+        # 同一个已验证可用的版本。
+        py7zrversion: '==1.1.0'
 
     - name: Setup MSVC
       uses: microsoft/setup-msbuild@v2
