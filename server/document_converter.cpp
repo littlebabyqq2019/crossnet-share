@@ -1,7 +1,9 @@
 #include "document_converter.h"
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QMap>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSettings>
@@ -12,17 +14,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
-#include <QMutex>
-#include <chrono>
-#include <condition_variable>
-#include <functional>
 #include <memory>
-#include <mutex>
-#include <thread>
-#ifdef Q_OS_WIN
-#include <QAxObject>
-#include <objbase.h>
-#endif
 
 namespace CrossNetShare {
 
@@ -73,143 +65,77 @@ QString withDetails(const QString& message, const QString& details) {
 }
 
 #ifdef Q_OS_WIN
-// Word.Application 的全部生命周期都被限定在一个专用的工作线程内部：
-// 该线程创建自己的 Word 实例，逐个执行提交给它的任务，任务闭包只在工作
-// 线程实际执行时才拿到 QAxObject* 指针（作为参数传入），调用方（网络线程）
-// 提交任务时完全不知道、也不需要碰这个指针本身。
+// Word 的自动化接口本质上是一个进程外 COM 服务器（WINWORD.EXE）。之前两次
+// "进程内隔离"的尝试——看门狗强杀 WINWORD.EXE、把 COM 调用挪到服务端进程内
+// 的专用线程——实测都会在 Word 假死/崇溃时导致服务端主进程本身毫无提示地
+// 整体消失：只要 COM 调用发生在服务端自己的进程地址空间内，一次跨进程 RPC
+// 失联就可能以未处理的结构化异常波及整个进程，任何线程级隔离都无法根治。
 //
-// 如果 Word 在某次任务中假死，工作线程会永久卡在那次 COM 调用里——但这只会
-// 拖死这一个线程和它对应的 WINWORD.EXE 进程，不会影响任何其他功能（网页请求、
-// 文件下载、设置界面等全部继续正常工作）。调用方等待超时后会立刻收到错误，
-// 并将这个工作线程标记为"已作废"；下一次转换请求会启动一个全新的工作线程和
-// 全新的 Word 实例。旧的工作线程和它卡住的 WINWORD.EXE 进程被直接放弃
-// （不再有任何代码引用或操作它们），从根本上避免了跨线程强杀进程可能引发的崇溃。
-class WordWorker {
-public:
-    using Job = std::function<void(QAxObject*)>;
-
-    WordWorker() {
-        thread_ = std::thread([this]() { threadMain(); });
-    }
-
-    // 工作线程一旦启动就永不主动停止（即使外部不再使用它），
-    // 因为如果它当前正卡在一次 COM 调用里，任何尝试 join 的操作本身也会被
-    // 阻塞。直接 detach，随进程退出而结束即可，代价是可能残留一个僵死的
-    // WINWORD.EXE 进程，需要靠重启服务端来清理。
-    ~WordWorker() {
-        thread_.detach();
-    }
-
-    // 提交一个任务并等待最多 timeoutMs 毫秒。同一个 WordWorker 实例上的
-    // 多次调用会被互相串行化，不会并发提交多个任务。
-    // 返回 true 表示任务在超时前已经执行完成；返回 false 表示超时——
-    // 此时任务可能仍在工作线程里挂着，这个 WordWorker 实例应被视为已作废。
-    bool run(Job job, int timeoutMs) {
-        std::lock_guard<std::mutex> submitLock(submitMutex_);
-
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            pendingJob_ = std::move(job);
-            jobDone_ = false;
-        }
-        jobReady_.notify_one();
-
-        std::unique_lock<std::mutex> lock(mutex_);
-        return doneCv_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this]() { return jobDone_; });
-    }
-
-private:
-    void threadMain() {
-        // 这是一个全新的、Qt 未曾管理过的原生线程，必须先手动初始化 COM
-        // 套间，否则下面创建 QAxObject 会直接失败。使用 STA（单线程套间）
-        // 与 Word 这种进程外 COM 服务器的推荐使用方式保持一致。
-        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-
-        QAxObject* wordApp = new QAxObject("Word.Application");
-        if (!wordApp->isNull()) {
-            wordApp->setProperty("Visible", false);
-            wordApp->setProperty("DisplayAlerts", 0);
-        }
-
-        while (true) {
-            Job job;
-            {
-                std::unique_lock<std::mutex> lock(mutex_);
-                jobReady_.wait(lock, [this]() { return static_cast<bool>(pendingJob_); });
-                job = std::move(pendingJob_);
-                pendingJob_ = nullptr;
-            }
-
-            // job() 在这里可能永久阻塞（Word 假死）。如果发生，这个线程就
-            // 永远停在这一行，再也不会回到循环顶部——这正是预期行为：
-            // 外部的 run() 调用早已因超时返回，本线程和它持有的 wordApp
-            // 已被上层逻辑放弃，不会再有任何代码等待或依赖这次调用的结果。
-            job(wordApp);
-
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                jobDone_ = true;
-            }
-            doneCv_.notify_one();
-        }
-    }
-
-    std::thread thread_;
-    std::mutex submitMutex_;
-    std::mutex mutex_;
-    std::condition_variable jobReady_;
-    std::condition_variable doneCv_;
-    Job pendingJob_;
-    bool jobDone_ = false;
-};
-
-// 当前有效的工作线程，用裸指针管理，而非 shared_ptr/unique_ptr。
-//
-// 这是有意为之：一旦某次调用超时，我们只是把这个指针替换为一个全新实例，
-// 旧对象绝不会被 delete——因为它的线程可能仍卡在一次 COM 调用里，
-// 一旦最终从卡住状态返回（比如 Word 自己崇溃退出），仍会访问自己的
-// mutex_/doneCv_ 等成员。销毁一个其线程仍可能运行的对象是释放后使用的
-// 未定义行为；而放着不管，最坏后果只是泄漏一小块内存和一个线程句柄，
-// 随进程退出一起被系统回收，代价远小于一次崇溃。
-WordWorker* g_wordWorker = nullptr;
-QMutex g_wordWorkerMutex;
-
-WordWorker* getOrCreateWordWorker() {
-    QMutexLocker locker(&g_wordWorkerMutex);
-    if (!g_wordWorker) {
-        g_wordWorker = new WordWorker();
-    }
-    return g_wordWorker;
+// 真正安全的隔离是进程级的：把"打开 Word 文档→导出 PDF"这个操作整个放进一个
+// 独立的辅助程序 CrossNetShareWordHelper.exe（见 server/word_pdf_helper.cpp）
+// 里执行。服务端通过 QProcess 启动它、限时等待其退出；无论它卡死、崇溃还是
+// 被服务端强制终止，都只影响这一个独立的子进程，操作系统保证不会波及服务端
+// 主进程的任何线程或状态。
+QString wordHelperExecutablePath() {
+    return QDir(QCoreApplication::applicationDirPath()).filePath("CrossNetShareWordHelper.exe");
 }
 
-void discardWordWorker(WordWorker* worker) {
-    QMutexLocker locker(&g_wordWorkerMutex);
-    if (g_wordWorker == worker) {
-        // 只是放弃这个指针，绝不 delete——参见上面的说明。
-        g_wordWorker = nullptr;
+// 启动辅助进程转换一次文档，最多等待 timeoutMs。
+// 返回值：true 表示辅助进程在超时前正常退出（具体成功/失败还要看 errorOut
+// 和调用方对输出文件的检查）；false 表示超时，此时会强制终止这个独立子进程
+// ——这是完全安全的操作，因为它是一个与服务端毫无共享状态的外部进程。
+bool runWordHelperProcess(const QString& inputPath, const QString& outputPdfPath,
+                           int timeoutMs, QString& errorOut) {
+    QString helperPath = wordHelperExecutablePath();
+    if (!QFile::exists(helperPath)) {
+        errorOut = "CrossNetShareWordHelper.exe not found next to the server executable";
+        return false;
     }
-}
 
-// 在专用 Word 工作线程上执行 job，最多等待 timeoutMs。
-// 返回 true 表示成功在超时前完成；返回 false 表示超时，此时已自动
-// 丢弃这个作废的工作线程，下一次调用会透明地创建一个全新的实例。
-bool runOnWordWorker(const WordWorker::Job& job, int timeoutMs = 30000) {
-    WordWorker* worker = getOrCreateWordWorker();
-    bool completed = worker->run(job, timeoutMs);
-    if (!completed) {
-        qDebug() << "[DocumentConverter] Word worker did not respond within" << timeoutMs
-                  << "ms, discarding it - a fresh Word instance will be used for future requests";
-        discardWordWorker(worker);
+    QProcess process;
+    process.start(helperPath, {inputPath, outputPdfPath});
+    if (!process.waitForStarted(10000)) {
+        errorOut = "Failed to start CrossNetShareWordHelper.exe: " + process.errorString();
+        return false;
     }
-    return completed;
+
+    if (!process.waitForFinished(timeoutMs)) {
+        qDebug() << "[DocumentConverter] Word helper process did not exit within" << timeoutMs
+                  << "ms, killing it (server process is unaffected)";
+        process.kill();
+        process.waitForFinished(5000);
+        errorOut = "Microsoft Word became unresponsive while converting the document";
+        return false;
+    }
+
+    if (process.exitStatus() != QProcess::NormalExit) {
+        errorOut = "Word helper process crashed";
+        return false;
+    }
+
+    int exitCode = process.exitCode();
+    if (exitCode != 0) {
+        static const QMap<int, QString> exitCodeMeanings = {
+            {1, "Invalid arguments"},
+            {2, "Failed to start Microsoft Word"},
+            {3, "Failed to access Word Documents collection"},
+            {4, "Failed to open the document"},
+            {5, "Word did not generate a PDF file"},
+        };
+        errorOut = "Word helper process failed: " + exitCodeMeanings.value(exitCode, "Unknown error " + QString::number(exitCode));
+        return false;
+    }
+
+    return true;
 }
 #endif
 
 }
 
 void DocumentConverter::initialize() {
-    // Word.Application 现在按需在专用工作线程内延迟创建（见 runOnWordWorker），
-    // 这里不再需要预热，只确保预览缓存目录存在。
+    // Word 转换现在完全由独立的 CrossNetShareWordHelper.exe 子进程按需
+    // 执行（见 runWordHelperProcess），这里不再需要预热任何东西，只确保
+    // 预览缓存目录存在。
 
     QDir cacheDir(QDir::temp().filePath("crossnet_preview_cache"));
     if (!cacheDir.exists()) {
@@ -218,16 +144,8 @@ void DocumentConverter::initialize() {
 }
 
 void DocumentConverter::cleanup() {
-#ifdef Q_OS_WIN
-    // 只在工作线程存在、且此刻处于空闲（未卡死）状态时才礼貌地调用 Quit()。
-    // 如果它正卡在上一次任务里，短暂等待后直接放弃——反正进程马上就要退出了，
-    // 残留的 WINWORD.EXE 会成为孤儿进程，用户可在任务管理器里清理。
-    runOnWordWorker([](QAxObject* wordApp) {
-        if (wordApp && !wordApp->isNull()) {
-            wordApp->dynamicCall("Quit()");
-        }
-    }, 5000);
-#endif
+    // 每次转换都是一次性启动、转换、退出的独立子进程（见
+    // runWordHelperProcess），没有常驻的 Word 实例需要在此关闭。
 }
 
 DocumentConverter::PreviewResult DocumentConverter::previewFile(const QString& filePath) {
@@ -370,66 +288,27 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
     result.error = "Microsoft Word COM conversion is only available on Windows";
     return result;
 #else
-    auto tempDir = std::make_shared<QTemporaryDir>(QDir::temp().filePath("crossnet_word_preview_XXXXXX"));
-    if (!tempDir->isValid()) {
+    QTemporaryDir tempDir(QDir::temp().filePath("crossnet_word_preview_XXXXXX"));
+    if (!tempDir.isValid()) {
         result.success = false;
         result.error = "Failed to create temporary Word conversion directory";
         return result;
     }
 
-    auto pdfPath = std::make_shared<QString>(tempDir->path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf");
-    QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
-    QString nativePdfPath = QDir::toNativeSeparators(*pdfPath);
+    QString pdfPath = tempDir.path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf";
 
-    // 整个"打开-导出-关闭"序列作为单个任务提交给工作线程。
-    // 所有输入参数按值捕获，任务内部只使用本地拷贝，绝不引用调用方栈上的
-    // 任何对象——这样即使调用方因超时提前返回、栈帧被销毁，工作线程里仍在
-    // 运行的任务也不会访问到悬空引用。tempDir 用 shared_ptr 按值捕获以延长
-    // 其生命周期：只要任务闭包还持有它，临时目录就不会被提前删除。
-    auto jobError = std::make_shared<QString>();
-    auto jobSuccess = std::make_shared<bool>(false);
-
-    bool completed = runOnWordWorker([tempDir, nativeInputPath, nativePdfPath, jobError, jobSuccess](QAxObject* wordApp) {
-        if (!wordApp || wordApp->isNull()) {
-            *jobError = "Microsoft Word failed to start";
-            return;
-        }
-
-        QAxObject* documents = wordApp->querySubObject("Documents");
-        if (!documents) {
-            *jobError = "Failed to access Microsoft Word Documents collection";
-            return;
-        }
-
-        QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
-            nativeInputPath, false, true, false);
-        delete documents;
-
-        if (!document) {
-            *jobError = "Microsoft Word failed to open the document";
-            return;
-        }
-
-        document->dynamicCall("ExportAsFixedFormat(const QString&, int)", nativePdfPath, 17);
-        document->dynamicCall("Close(bool)", false);
-        delete document;
-
-        *jobSuccess = true;
-    }, 30000);
+    // 转换完全在独立子进程 CrossNetShareWordHelper.exe 里进行，详见文件顶部
+    // runWordHelperProcess() 的说明。这里的服务端线程只是启动它、限时等待。
+    QString helperError;
+    bool completed = runWordHelperProcess(filePath, pdfPath, 30000, helperError);
 
     if (!completed) {
         result.success = false;
-        result.error = "Microsoft Word became unresponsive while converting the document";
+        result.error = helperError;
         return result;
     }
 
-    if (!*jobSuccess) {
-        result.success = false;
-        result.error = jobError->isEmpty() ? "Microsoft Word conversion failed" : *jobError;
-        return result;
-    }
-
-    QFile pdfFile(*pdfPath);
+    QFile pdfFile(pdfPath);
     if (!pdfFile.open(QIODevice::ReadOnly)) {
         result.success = false;
         result.error = "Microsoft Word did not generate a PDF file";
@@ -609,60 +488,25 @@ QString DocumentConverter::convertWordToJpg(const QString& filePath, const QStri
 #ifdef Q_OS_WIN
     QDir().mkpath(outputDir);
 
-    QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
     QString baseName = QFileInfo(filePath).completeBaseName();
-    auto tempPdfPath = std::make_shared<QString>(outputDir + "/" + baseName + "_temp.pdf");
-    QString nativeTempPdfPath = QDir::toNativeSeparators(*tempPdfPath);
+    QString tempPdfPath = outputDir + "/" + baseName + "_temp.pdf";
 
-    // 同样把"打开-导出-关闭"打包为单个任务，所有参数按值捕获，
-    // 详见 convertWordWithMicrosoftWord() 中的说明。
-    auto jobError = std::make_shared<QString>();
-    auto jobSuccess = std::make_shared<bool>(false);
-
-    bool completed = runOnWordWorker([nativeInputPath, nativeTempPdfPath, jobError, jobSuccess](QAxObject* wordApp) {
-        if (!wordApp || wordApp->isNull()) {
-            *jobError = "Microsoft Word failed to start";
-            return;
-        }
-
-        QAxObject* documents = wordApp->querySubObject("Documents");
-        if (!documents) {
-            *jobError = "Failed to access Microsoft Word Documents collection";
-            return;
-        }
-
-        QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
-            nativeInputPath, false, true, false);
-        delete documents;
-
-        if (!document) {
-            *jobError = "Microsoft Word failed to open the document";
-            return;
-        }
-
-        document->dynamicCall("ExportAsFixedFormat(const QString&, int)", nativeTempPdfPath, 17);
-        document->dynamicCall("Close(bool)", false);
-        delete document;
-
-        *jobSuccess = true;
-    }, 30000);
+    // 转换完全在独立子进程 CrossNetShareWordHelper.exe 里进行，详见文件顶部
+    // runWordHelperProcess() 的说明。
+    QString helperError;
+    bool completed = runWordHelperProcess(filePath, tempPdfPath, 30000, helperError);
 
     if (!completed) {
-        qDebug() << "Microsoft Word became unresponsive while converting the document";
+        qDebug() << "Word conversion failed:" << helperError;
         return QString();
     }
 
-    if (!*jobSuccess) {
-        qDebug() << "Word conversion failed:" << *jobError;
-        return QString();
-    }
-
-    if (!QFile::exists(*tempPdfPath)) {
+    if (!QFile::exists(tempPdfPath)) {
         qDebug() << "Failed to generate PDF";
         return QString();
     }
 
-    return *tempPdfPath;
+    return tempPdfPath;
 #else
     Q_UNUSED(filePath);
     Q_UNUSED(outputDir);
