@@ -12,23 +12,19 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
-#include <atomic>
+#include <QMutex>
 #include <chrono>
 #include <condition_variable>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <thread>
 #ifdef Q_OS_WIN
 #include <QAxObject>
-#include <windows.h>
-#include <tlhelp32.h>
+#include <objbase.h>
 #endif
 
 namespace CrossNetShare {
-
-#ifdef Q_OS_WIN
-QAxObject* DocumentConverter::wordApp = nullptr;
-QMutex DocumentConverter::wordMutex;
-#endif
 
 namespace {
 
@@ -76,15 +72,144 @@ QString withDetails(const QString& message, const QString& details) {
     return details.isEmpty() ? message : message + "\n" + details;
 }
 
+#ifdef Q_OS_WIN
+// Word.Application 的全部生命周期都被限定在一个专用的工作线程内部：
+// 该线程创建自己的 Word 实例，逐个执行提交给它的任务，任务闭包只在工作
+// 线程实际执行时才拿到 QAxObject* 指针（作为参数传入），调用方（网络线程）
+// 提交任务时完全不知道、也不需要碰这个指针本身。
+//
+// 如果 Word 在某次任务中假死，工作线程会永久卡在那次 COM 调用里——但这只会
+// 拖死这一个线程和它对应的 WINWORD.EXE 进程，不会影响任何其他功能（网页请求、
+// 文件下载、设置界面等全部继续正常工作）。调用方等待超时后会立刻收到错误，
+// 并将这个工作线程标记为"已作废"；下一次转换请求会启动一个全新的工作线程和
+// 全新的 Word 实例。旧的工作线程和它卡住的 WINWORD.EXE 进程被直接放弃
+// （不再有任何代码引用或操作它们），从根本上避免了跨线程强杀进程可能引发的崇溃。
+class WordWorker {
+public:
+    using Job = std::function<void(QAxObject*)>;
+
+    WordWorker() {
+        thread_ = std::thread([this]() { threadMain(); });
+    }
+
+    // 工作线程一旦启动就永不主动停止（即使外部不再使用它），
+    // 因为如果它当前正卡在一次 COM 调用里，任何尝试 join 的操作本身也会被
+    // 阻塞。直接 detach，随进程退出而结束即可，代价是可能残留一个僵死的
+    // WINWORD.EXE 进程，需要靠重启服务端来清理。
+    ~WordWorker() {
+        thread_.detach();
+    }
+
+    // 提交一个任务并等待最多 timeoutMs 毫秒。同一个 WordWorker 实例上的
+    // 多次调用会被互相串行化，不会并发提交多个任务。
+    // 返回 true 表示任务在超时前已经执行完成；返回 false 表示超时——
+    // 此时任务可能仍在工作线程里挂着，这个 WordWorker 实例应被视为已作废。
+    bool run(Job job, int timeoutMs) {
+        std::lock_guard<std::mutex> submitLock(submitMutex_);
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            pendingJob_ = std::move(job);
+            jobDone_ = false;
+        }
+        jobReady_.notify_one();
+
+        std::unique_lock<std::mutex> lock(mutex_);
+        return doneCv_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this]() { return jobDone_; });
+    }
+
+private:
+    void threadMain() {
+        // 这是一个全新的、Qt 未曾管理过的原生线程，必须先手动初始化 COM
+        // 套间，否则下面创建 QAxObject 会直接失败。使用 STA（单线程套间）
+        // 与 Word 这种进程外 COM 服务器的推荐使用方式保持一致。
+        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+        QAxObject* wordApp = new QAxObject("Word.Application");
+        if (!wordApp->isNull()) {
+            wordApp->setProperty("Visible", false);
+            wordApp->setProperty("DisplayAlerts", 0);
+        }
+
+        while (true) {
+            Job job;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                jobReady_.wait(lock, [this]() { return static_cast<bool>(pendingJob_); });
+                job = std::move(pendingJob_);
+                pendingJob_ = nullptr;
+            }
+
+            // job() 在这里可能永久阻塞（Word 假死）。如果发生，这个线程就
+            // 永远停在这一行，再也不会回到循环顶部——这正是预期行为：
+            // 外部的 run() 调用早已因超时返回，本线程和它持有的 wordApp
+            // 已被上层逻辑放弃，不会再有任何代码等待或依赖这次调用的结果。
+            job(wordApp);
+
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                jobDone_ = true;
+            }
+            doneCv_.notify_one();
+        }
+    }
+
+    std::thread thread_;
+    std::mutex submitMutex_;
+    std::mutex mutex_;
+    std::condition_variable jobReady_;
+    std::condition_variable doneCv_;
+    Job pendingJob_;
+    bool jobDone_ = false;
+};
+
+// 当前有效的工作线程，用裸指针管理，而非 shared_ptr/unique_ptr。
+//
+// 这是有意为之：一旦某次调用超时，我们只是把这个指针替换为一个全新实例，
+// 旧对象绝不会被 delete——因为它的线程可能仍卡在一次 COM 调用里，
+// 一旦最终从卡住状态返回（比如 Word 自己崇溃退出），仍会访问自己的
+// mutex_/doneCv_ 等成员。销毁一个其线程仍可能运行的对象是释放后使用的
+// 未定义行为；而放着不管，最坏后果只是泄漏一小块内存和一个线程句柄，
+// 随进程退出一起被系统回收，代价远小于一次崇溃。
+WordWorker* g_wordWorker = nullptr;
+QMutex g_wordWorkerMutex;
+
+WordWorker* getOrCreateWordWorker() {
+    QMutexLocker locker(&g_wordWorkerMutex);
+    if (!g_wordWorker) {
+        g_wordWorker = new WordWorker();
+    }
+    return g_wordWorker;
+}
+
+void discardWordWorker(WordWorker* worker) {
+    QMutexLocker locker(&g_wordWorkerMutex);
+    if (g_wordWorker == worker) {
+        // 只是放弃这个指针，绝不 delete——参见上面的说明。
+        g_wordWorker = nullptr;
+    }
+}
+
+// 在专用 Word 工作线程上执行 job，最多等待 timeoutMs。
+// 返回 true 表示成功在超时前完成；返回 false 表示超时，此时已自动
+// 丢弃这个作废的工作线程，下一次调用会透明地创建一个全新的实例。
+bool runOnWordWorker(const WordWorker::Job& job, int timeoutMs = 30000) {
+    WordWorker* worker = getOrCreateWordWorker();
+    bool completed = worker->run(job, timeoutMs);
+    if (!completed) {
+        qDebug() << "[DocumentConverter] Word worker did not respond within" << timeoutMs
+                  << "ms, discarding it - a fresh Word instance will be used for future requests";
+        discardWordWorker(worker);
+    }
+    return completed;
+}
+#endif
+
 }
 
 void DocumentConverter::initialize() {
-#ifdef Q_OS_WIN
-    QMutexLocker locker(&wordMutex);
-    if (!wordApp) {
-        restartWordApp();
-    }
-#endif
+    // Word.Application 现在按需在专用工作线程内延迟创建（见 runOnWordWorker），
+    // 这里不再需要预热，只确保预览缓存目录存在。
 
     QDir cacheDir(QDir::temp().filePath("crossnet_preview_cache"));
     if (!cacheDir.exists()) {
@@ -94,136 +219,16 @@ void DocumentConverter::initialize() {
 
 void DocumentConverter::cleanup() {
 #ifdef Q_OS_WIN
-    QMutexLocker locker(&wordMutex);
-    if (wordApp) {
-        runWordActionWithWatchdog([]() {
-            DocumentConverter::wordApp->dynamicCall("Quit()");
-        });
-        delete wordApp;
-        wordApp = nullptr;
-    }
-#endif
-}
-
-#ifdef Q_OS_WIN
-void DocumentConverter::restartWordApp() {
-    if (wordApp) {
-        // 旧对象可能已经处于异常状态。Quit() 本身也可能挂死，
-        // 因此同样放在看门狗保护下执行，忽略任何失败。
-        runWordActionWithWatchdog([]() {
-            DocumentConverter::wordApp->dynamicCall("Quit()");
-        });
-        delete wordApp;
-        wordApp = nullptr;
-    }
-
-    // 强杀残留的 WINWORD.EXE 进程，确保接下来创建的是一个全新、干净的实例，
-    // 不会意外附着到一个仍处于异常状态的旧进程上。
-    killWordProcess();
-
-    wordApp = new QAxObject("Word.Application");
-    if (!wordApp->isNull()) {
-        wordApp->setProperty("Visible", false);
-        wordApp->setProperty("DisplayAlerts", 0);
-    } else {
-        delete wordApp;
-        wordApp = nullptr;
-    }
-}
-
-bool DocumentConverter::ensureWordAppReady() {
-    if (!wordApp || wordApp->isNull()) {
-        restartWordApp();
-        return wordApp && !wordApp->isNull();
-    }
-
-    // 通过访问 Documents 集合来验证底层 COM 连接是否仍然存活。
-    // Word 长时间运行后可能进入异常状态（进程假死、被系统回收等），
-    // wordApp->isNull() 无法检测到这种情况，只能靠实际调用来试探。
-    bool alive = false;
-    bool watchdogOk = runWordActionWithWatchdog([&alive]() {
-        QAxObject* documents = DocumentConverter::wordApp->querySubObject("Documents");
-        alive = documents != nullptr;
-        delete documents;
-    });
-
-    if (!watchdogOk || !alive || !wordApp || wordApp->isNull()) {
-        qDebug() << "[DocumentConverter] Word COM connection appears dead, restarting Word.Application";
-        restartWordApp();
-        return wordApp && !wordApp->isNull();
-    }
-
-    return true;
-}
-
-void DocumentConverter::killWordProcess() {
-    // 只终止 WINWORD.EXE 进程本身，绝不在这里触碰 wordApp 指针——
-    // 该指针始终只由持有 wordMutex 的调用线程管理，避免两个线程
-    // 同时操作/释放同一个 QAxObject 造成的数据竞争。
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        return;
-    }
-
-    PROCESSENTRY32 entry;
-    entry.dwSize = sizeof(PROCESSENTRY32);
-
-    if (Process32First(snapshot, &entry)) {
-        do {
-            if (_stricmp(entry.szExeFile, "WINWORD.EXE") == 0) {
-                HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
-                if (process) {
-                    TerminateProcess(process, 1);
-                    CloseHandle(process);
-                }
-            }
-        } while (Process32Next(snapshot, &entry));
-    }
-
-    CloseHandle(snapshot);
-}
-
-bool DocumentConverter::runWordActionWithWatchdog(const std::function<void()>& action, int timeoutMs) {
-    auto done = std::make_shared<std::atomic<bool>>(false);
-    auto killedByWatchdog = std::make_shared<std::atomic<bool>>(false);
-    auto mutex = std::make_shared<std::mutex>();
-    auto cv = std::make_shared<std::condition_variable>();
-
-    // action 始终在当前线程（持有 wordMutex 的调用线程）同步执行；
-    // 看门狗线程只负责计时和在超时后强杀 WINWORD.EXE 进程本身。
-    // 一旦目标进程被杀死，卡在 IDispatch::Invoke 里的 COM RPC 调用会因为
-    // 服务端进程消失而返回错误，从而让 action() 在调用线程上正常返回，
-    // 而不是永久阻塞——这样就不会有两个线程同时访问同一个 QAxObject。
-    std::thread watchdog([done, killedByWatchdog, mutex, cv, timeoutMs]() {
-        std::unique_lock<std::mutex> lock(*mutex);
-        if (!cv->wait_for(lock, std::chrono::milliseconds(timeoutMs), [done]() { return done->load(); })) {
-            qDebug() << "[DocumentConverter] Word COM call exceeded" << timeoutMs << "ms, force-killing WINWORD.EXE";
-            killedByWatchdog->store(true);
-            DocumentConverter::killWordProcess();
+    // 只在工作线程存在、且此刻处于空闲（未卡死）状态时才礼貌地调用 Quit()。
+    // 如果它正卡在上一次任务里，短暂等待后直接放弃——反正进程马上就要退出了，
+    // 残留的 WINWORD.EXE 会成为孤儿进程，用户可在任务管理器里清理。
+    runOnWordWorker([](QAxObject* wordApp) {
+        if (wordApp && !wordApp->isNull()) {
+            wordApp->dynamicCall("Quit()");
         }
-    });
-
-    action();
-
-    {
-        std::lock_guard<std::mutex> lock(*mutex);
-        done->store(true);
-    }
-    cv->notify_all();
-    watchdog.join();
-
-    if (killedByWatchdog->load()) {
-        // 进程已被强杀，wordApp 包装的 COM 连接必然失效。
-        // 此刻已经脱离 action() 的执行、回到调用线程的正常控制流，
-        // 在这里安全地丢弃旧指针，避免悬挂引用。
-        delete wordApp;
-        wordApp = nullptr;
-        return false;
-    }
-
-    return wordApp && !wordApp->isNull();
-}
+    }, 5000);
 #endif
+}
 
 DocumentConverter::PreviewResult DocumentConverter::previewFile(const QString& filePath) {
     QFileInfo info(filePath);
@@ -365,78 +370,66 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
     result.error = "Microsoft Word COM conversion is only available on Windows";
     return result;
 #else
-    QMutexLocker locker(&wordMutex);
-
-    if (!ensureWordAppReady()) {
-        result.success = false;
-        result.error = "Microsoft Word is not initialized and could not be restarted.";
-        return result;
-    }
-
-    QTemporaryDir tempDir(QDir::temp().filePath("crossnet_word_preview_XXXXXX"));
-    if (!tempDir.isValid()) {
+    auto tempDir = std::make_shared<QTemporaryDir>(QDir::temp().filePath("crossnet_word_preview_XXXXXX"));
+    if (!tempDir->isValid()) {
         result.success = false;
         result.error = "Failed to create temporary Word conversion directory";
         return result;
     }
 
-    QString pdfPath = tempDir.path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf";
+    auto pdfPath = std::make_shared<QString>(tempDir->path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf");
     QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
-    QString nativePdfPath = QDir::toNativeSeparators(pdfPath);
+    QString nativePdfPath = QDir::toNativeSeparators(*pdfPath);
 
-    QAxObject* documents = nullptr;
-    runWordActionWithWatchdog([&]() {
-        documents = wordApp->querySubObject("Documents");
-    });
-    if (!documents) {
-        // 再尝试一次重启后重试，应对 Documents 集合突然失效的情况
-        restartWordApp();
-        if (wordApp && !wordApp->isNull()) {
-            runWordActionWithWatchdog([&]() {
-                documents = wordApp->querySubObject("Documents");
-            });
+    // 整个"打开-导出-关闭"序列作为单个任务提交给工作线程。
+    // 所有输入参数按值捕获，任务内部只使用本地拷贝，绝不引用调用方栈上的
+    // 任何对象——这样即使调用方因超时提前返回、栈帧被销毁，工作线程里仍在
+    // 运行的任务也不会访问到悬空引用。tempDir 用 shared_ptr 按值捕获以延长
+    // 其生命周期：只要任务闭包还持有它，临时目录就不会被提前删除。
+    auto jobError = std::make_shared<QString>();
+    auto jobSuccess = std::make_shared<bool>(false);
+
+    bool completed = runOnWordWorker([tempDir, nativeInputPath, nativePdfPath, jobError, jobSuccess](QAxObject* wordApp) {
+        if (!wordApp || wordApp->isNull()) {
+            *jobError = "Microsoft Word failed to start";
+            return;
         }
-    }
-    if (!documents) {
-        result.success = false;
-        result.error = "Failed to access Microsoft Word Documents collection";
-        return result;
-    }
 
-    QAxObject* document = nullptr;
-    bool timedOut = !runWordActionWithWatchdog([&]() {
-        document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
+        QAxObject* documents = wordApp->querySubObject("Documents");
+        if (!documents) {
+            *jobError = "Failed to access Microsoft Word Documents collection";
+            return;
+        }
+
+        QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
             nativeInputPath, false, true, false);
-    });
-    delete documents;
+        delete documents;
 
-    if (timedOut) {
-        delete document;
-        result.success = false;
-        result.error = "Microsoft Word became unresponsive while opening the document";
-        return result;
-    }
+        if (!document) {
+            *jobError = "Microsoft Word failed to open the document";
+            return;
+        }
 
-    if (!document) {
-        result.success = false;
-        result.error = "Microsoft Word failed to open the document";
-        return result;
-    }
-
-    timedOut = !runWordActionWithWatchdog([&]() {
-        document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
-            nativePdfPath, 17);
+        document->dynamicCall("ExportAsFixedFormat(const QString&, int)", nativePdfPath, 17);
         document->dynamicCall("Close(bool)", false);
-    });
-    delete document;
+        delete document;
 
-    if (timedOut) {
+        *jobSuccess = true;
+    }, 30000);
+
+    if (!completed) {
         result.success = false;
-        result.error = "Microsoft Word became unresponsive while exporting the document";
+        result.error = "Microsoft Word became unresponsive while converting the document";
         return result;
     }
 
-    QFile pdfFile(pdfPath);
+    if (!*jobSuccess) {
+        result.success = false;
+        result.error = jobError->isEmpty() ? "Microsoft Word conversion failed" : *jobError;
+        return result;
+    }
+
+    QFile pdfFile(*pdfPath);
     if (!pdfFile.open(QIODevice::ReadOnly)) {
         result.success = false;
         result.error = "Microsoft Word did not generate a PDF file";
@@ -614,78 +607,62 @@ void DocumentConverter::cleanupCache() {
 
 QString DocumentConverter::convertWordToJpg(const QString& filePath, const QString& outputDir) {
 #ifdef Q_OS_WIN
-    QMutexLocker locker(&wordMutex);
-
-    if (!ensureWordAppReady()) {
-        qDebug() << "Microsoft Word not available for conversion";
-        return QString();
-    }
-
     QDir().mkpath(outputDir);
 
     QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
     QString baseName = QFileInfo(filePath).completeBaseName();
-    QString outputPath = outputDir + "/" + baseName + ".png";
-    QString nativeOutputPath = QDir::toNativeSeparators(outputPath);
+    auto tempPdfPath = std::make_shared<QString>(outputDir + "/" + baseName + "_temp.pdf");
+    QString nativeTempPdfPath = QDir::toNativeSeparators(*tempPdfPath);
 
-    QAxObject* documents = nullptr;
-    runWordActionWithWatchdog([&]() {
-        documents = wordApp->querySubObject("Documents");
-    });
-    if (!documents) {
-        // 再尝试一次重启后重试
-        restartWordApp();
-        if (wordApp && !wordApp->isNull()) {
-            runWordActionWithWatchdog([&]() {
-                documents = wordApp->querySubObject("Documents");
-            });
+    // 同样把"打开-导出-关闭"打包为单个任务，所有参数按值捕获，
+    // 详见 convertWordWithMicrosoftWord() 中的说明。
+    auto jobError = std::make_shared<QString>();
+    auto jobSuccess = std::make_shared<bool>(false);
+
+    bool completed = runOnWordWorker([nativeInputPath, nativeTempPdfPath, jobError, jobSuccess](QAxObject* wordApp) {
+        if (!wordApp || wordApp->isNull()) {
+            *jobError = "Microsoft Word failed to start";
+            return;
         }
-    }
-    if (!documents) {
-        qDebug() << "Failed to access Word Documents";
-        return QString();
-    }
 
-    QAxObject* document = nullptr;
-    bool timedOut = !runWordActionWithWatchdog([&]() {
-        document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
+        QAxObject* documents = wordApp->querySubObject("Documents");
+        if (!documents) {
+            *jobError = "Failed to access Microsoft Word Documents collection";
+            return;
+        }
+
+        QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
             nativeInputPath, false, true, false);
-    });
-    delete documents;
+        delete documents;
 
-    if (timedOut) {
-        delete document;
-        qDebug() << "Microsoft Word became unresponsive while opening the document";
-        return QString();
-    }
+        if (!document) {
+            *jobError = "Microsoft Word failed to open the document";
+            return;
+        }
 
-    if (!document) {
-        qDebug() << "Failed to open document in Word";
-        return QString();
-    }
-
-    // 导出高质量 PDF
-    QString tempPdfPath = outputDir + "/" + baseName + "_temp.pdf";
-    QString nativeTempPdfPath = QDir::toNativeSeparators(tempPdfPath);
-
-    timedOut = !runWordActionWithWatchdog([&]() {
-        document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
-            nativeTempPdfPath, 17);
+        document->dynamicCall("ExportAsFixedFormat(const QString&, int)", nativeTempPdfPath, 17);
         document->dynamicCall("Close(bool)", false);
-    });
-    delete document;
+        delete document;
 
-    if (timedOut) {
-        qDebug() << "Microsoft Word became unresponsive while exporting the document";
+        *jobSuccess = true;
+    }, 30000);
+
+    if (!completed) {
+        qDebug() << "Microsoft Word became unresponsive while converting the document";
         return QString();
     }
 
-    if (!QFile::exists(tempPdfPath)) {
+    if (!*jobSuccess) {
+        qDebug() << "Word conversion failed:" << *jobError;
+        return QString();
+    }
+
+    if (!QFile::exists(*tempPdfPath)) {
         qDebug() << "Failed to generate PDF";
         return QString();
     }
 
-    return tempPdfPath;
+    return *tempPdfPath;
 #else
     Q_UNUSED(filePath);
     Q_UNUSED(outputDir);
