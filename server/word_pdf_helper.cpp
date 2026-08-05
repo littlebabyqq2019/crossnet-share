@@ -22,7 +22,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QList>
 #include <QTimer>
+#include <QVariant>
 #include <windows.h>
 #include <shellapi.h>
 
@@ -206,10 +208,16 @@ int main(int argc, char* argv[]) {
         //   BitmapMissingFonts=true
         //   UseISO19005_1=false（不强制 PDF/A，保持导出效果与之前一致）
         logStep("calling ExportAsFixedFormat to \"" + nativeOutputPath + "\"...");
+        // QAxBase::dynamicCall 的定长重载最多只接受 8 个变体参数（加方法名
+        // 共 9 个），这个方法需要 14 个参数，必须使用 QList<QVariant> 形式
+        // 的重载。
+        QList<QVariant> exportArgs = {
+            nativeOutputPath, 17, false, 0, 0, 1, 1, 0, true, true, 0, true, true, false
+        };
         ok = runGuarded([&]() {
             document->dynamicCall(
                 "ExportAsFixedFormat(const QString&, int, bool, int, int, int, int, int, bool, bool, int, bool, bool, bool)",
-                nativeOutputPath, 17, false, 0, 0, 1, 1, 0, true, true, 0, true, true, false);
+                exportArgs);
         }, sehCode);
         if (!ok) {
             logStep(QString("CRASH: structured exception 0x%1 during ExportAsFixedFormat").arg(sehCode, 0, 16));
