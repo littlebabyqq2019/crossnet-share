@@ -25,10 +25,17 @@
 #include <QList>
 #include <QTimer>
 #include <QVariant>
+#include <cstdio>
+#include <cstring>
 #include <windows.h>
 #include <shellapi.h>
 
 namespace {
+
+// logStep() 和崩溃处理路径都要写同一个物理文件，用一份共享的、程序启动时
+// 一次性计算好的路径，避免两处各自拼路径时出现不一致。
+QString g_logFilePath;
+QByteArray g_logFilePathUtf8; // CreateFileA 需要的窄字符（UTF-8）版本
 
 // 这是一个 WIN32 子系统的 GUI 程序（无控制台），qDebug() 默认只写到调试器，
 // 用户和服务端都看不到。之前的修复都是在完全看不到本进程内部实际执行到
@@ -38,7 +45,7 @@ QFile* g_logFile = nullptr;
 
 void logStep(const QString& message) {
     if (!g_logFile) {
-        g_logFile = new QFile(QDir::temp().filePath("crossnet_word_helper.log"));
+        g_logFile = new QFile(g_logFilePath);
         g_logFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     }
     if (g_logFile->isOpen()) {
@@ -64,30 +71,64 @@ int sehExceptionFilter(unsigned int code) {
 
 // 用结构化异常处理（SEH）包裹一次可能触发硬件级异常（例如访问越界）的调用。
 // COM 自动化对象内部的崩溃常以这种方式传播，普通的 C++ try/catch 完全捕获
-// 不到。这样可以把它转化为一次"看得见"的失败：记录异常码并走正常的错误
-// 处理分支退出，而不是被操作系统直接判定为进程崩溃、悄无声息地消失。
+// 不到。
 //
-// 返回 true 表示 func() 正常执行完成；返回 false 表示捕获到了一次结构化
-// 异常（exceptionCodeOut 会被设为具体的异常码）。
+// 极其重要：一旦这里真的捕获到异常，就意味着底层 COM/RPC 通道大概率已经
+// 处于损坏状态。已用查证过的 Qt 源码证实——QAxObject 的析构函数
+// （QAxBase::clear()）会调用 IDispatch::Release()/IUnknown::Release()，
+// 而 querySubObject() 创建的每个子对象都以调用者为 QObject parent，所以
+// 哪怕调用方完全不写 delete，父对象（wordApp/document）析构时 Qt 也会
+// 级联 delete 所有子对象、从而级联触发这些 Release() 调用。对一个已经在
+// 硬件异常中损坏的 COM 接口再发出任何调用（包括这个隐式 Release），都有
+// 很高概率再次触发同样的硬件级异常——而这一次没有 __try 保护，会被系统
+// 当作真正的未处理异常直接杀掉整个进程。实测现象完全吻合：日志显示第
+// 一次异常被正确捕获并记录，但进程仍然以 QProcess::CrashExit 报告退出，
+// 说明是在捕获之后的清理代码（delete document/wordApp）里发生了第二次、
+// 未受保护的崩溃。
 //
-// 注意：这个函数本身刻意不包含任何需要栈展开的 C++ 对象（局部 QString 等）
-// ——__try 块所在的函数如果有这类局部对象会触发 MSVC C2712 编译错误。
-// func 是调用方传入的、只捕获简单值/指针的 lambda，它的调用是一次普通的
-// 嵌套函数调用，其内部创建的 C++ 对象位于 func 自己的栈帧里，与此处无关。
+// 因此这个函数不会返回、不会走"记录日志→delete→app.exit()"的常规清理
+// 流程——一旦捕获到异常，直接在 __except 块内部把日志写完，然后调用
+// TerminateProcess(GetCurrentProcess(), ...) 立即终止自身进程。这是
+// Windows 上唯一不经过任何 C++/Qt 析构链、不触碰任何 COM 对象、直接由
+// 内核强制回收资源的退出方式——绝不能换成 exit()/_exit()/app.exit()，
+// 那些都会继续执行当前函数栈上剩余对象的析构。
+//
+// 注意：__try 块所在的函数不能包含需要栈展开的 C++ 局部对象（局部 QString
+// 等），否则会触发 MSVC C2712 编译错误——这里全程只用 char 数组和整型，
+// 符合这个限制。
 template <typename Func>
-bool runGuarded(Func&& func, unsigned long& exceptionCodeOut) {
+void runGuardedOrDie(Func&& func, const char* stepDescription) {
     __try {
         func();
-        return true;
     } __except (sehExceptionFilter(GetExceptionCode())) {
-        exceptionCodeOut = static_cast<unsigned long>(GetExceptionCode());
-        return false;
+        unsigned long code = static_cast<unsigned long>(GetExceptionCode());
+        // 直接用 Win32 API 打开、追加、关闭日志文件，完全不经过 QFile/
+        // QString——同样是为了不在这个异常处理路径上创建任何需要栈展开/
+        // 析构的 C++ 对象。用带缓冲区大小的 sprintf_s（标准 CRT 安全扩展，
+        // 无需链接 user32.lib），不用 wsprintfA——后者是文档标注为不推荐
+        // 使用的旧 API，没有缓冲区大小检查。
+        char buf[256];
+        sprintf_s(buf, sizeof(buf),
+                  "CRASH: structured exception 0x%08lX during %s - terminating process immediately (no further COM calls, no destructors)\r\n",
+                  code, stepDescription);
+        HANDLE logHandle = CreateFileA(g_logFilePathUtf8.constData(), FILE_APPEND_DATA,
+                                        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (logHandle != INVALID_HANDLE_VALUE) {
+            DWORD written = 0;
+            WriteFile(logHandle, buf, static_cast<DWORD>(strlen(buf)), &written, nullptr);
+            CloseHandle(logHandle);
+        }
+        TerminateProcess(GetCurrentProcess(), 9);
     }
 }
 
 }
 
 int main(int argc, char* argv[]) {
+    g_logFilePath = QDir::temp().filePath("crossnet_word_helper.log");
+    g_logFilePathUtf8 = g_logFilePath.toUtf8();
+
     logStep(QString("=== helper starting, pid=%1 ===").arg(GetCurrentProcessId()));
 
     QApplication app(argc, argv);
@@ -123,18 +164,11 @@ int main(int argc, char* argv[]) {
         QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(inputPath).absoluteFilePath());
         QString nativeOutputPath = QDir::toNativeSeparators(QFileInfo(outputPdfPath).absoluteFilePath());
 
-        unsigned long sehCode = 0;
-
         logStep("creating Word.Application COM object...");
         QAxObject* wordApp = nullptr;
-        bool ok = runGuarded([&wordApp]() {
+        runGuardedOrDie([&wordApp]() {
             wordApp = new QAxObject("Word.Application");
-        }, sehCode);
-        if (!ok) {
-            logStep(QString("CRASH: structured exception 0x%1 while creating Word.Application").arg(sehCode, 0, 16));
-            app.exit(9);
-            return;
-        }
+        }, "creating Word.Application");
         logStep(QString("Word.Application created, isNull=%1").arg(wordApp->isNull()));
         if (wordApp->isNull()) {
             delete wordApp;
@@ -147,15 +181,9 @@ int main(int argc, char* argv[]) {
 
         logStep("querying Documents collection...");
         QAxObject* documents = nullptr;
-        ok = runGuarded([&]() {
+        runGuardedOrDie([&]() {
             documents = wordApp->querySubObject("Documents");
-        }, sehCode);
-        if (!ok) {
-            logStep(QString("CRASH: structured exception 0x%1 while querying Documents").arg(sehCode, 0, 16));
-            delete wordApp;
-            app.exit(9);
-            return;
-        }
+        }, "querying Documents");
         logStep(QString("Documents collection query returned %1").arg(documents ? "non-null" : "null"));
         if (!documents) {
             wordApp->dynamicCall("Quit()");
@@ -166,19 +194,12 @@ int main(int argc, char* argv[]) {
 
         logStep("calling Documents.Open(\"" + nativeInputPath + "\")...");
         QAxObject* document = nullptr;
-        ok = runGuarded([&]() {
+        runGuardedOrDie([&]() {
             document = documents->querySubObject(
                 "Open(const QString&, bool, bool, bool)",
                 nativeInputPath, false, true, false);
-        }, sehCode);
+        }, "opening the document");
         delete documents;
-        if (!ok) {
-            logStep(QString("CRASH: structured exception 0x%1 while opening the document").arg(sehCode, 0, 16));
-            wordApp->dynamicCall("Quit()");
-            delete wordApp;
-            app.exit(9);
-            return;
-        }
         logStep(QString("Documents.Open returned %1").arg(document ? "non-null" : "null"));
 
         if (!document) {
@@ -214,44 +235,24 @@ int main(int argc, char* argv[]) {
         QList<QVariant> exportArgs = {
             nativeOutputPath, 17, false, 0, 0, 1, 1, 0, true, true, 0, true, true, false
         };
-        ok = runGuarded([&]() {
+        runGuardedOrDie([&]() {
             document->dynamicCall(
                 "ExportAsFixedFormat(const QString&, int, bool, int, int, int, int, int, bool, bool, int, bool, bool, bool)",
                 exportArgs);
-        }, sehCode);
-        if (!ok) {
-            logStep(QString("CRASH: structured exception 0x%1 during ExportAsFixedFormat").arg(sehCode, 0, 16));
-            delete document;
-            delete wordApp;
-            app.exit(9);
-            return;
-        }
+        }, "ExportAsFixedFormat");
         logStep("ExportAsFixedFormat returned, calling Close...");
 
-        ok = runGuarded([&]() {
+        runGuardedOrDie([&]() {
             document->dynamicCall("Close(bool)", false);
-        }, sehCode);
-        if (!ok) {
-            logStep(QString("CRASH: structured exception 0x%1 while closing the document").arg(sehCode, 0, 16));
-            delete document;
-            delete wordApp;
-            app.exit(9);
-            return;
-        }
+        }, "closing the document");
         logStep("Close returned");
         delete document;
 
         logStep("calling Word Quit...");
-        ok = runGuarded([&]() {
+        runGuardedOrDie([&]() {
             wordApp->dynamicCall("Quit()");
-        }, sehCode);
-        if (!ok) {
-            logStep(QString("CRASH: structured exception 0x%1 during Quit").arg(sehCode, 0, 16));
-            // 导出很可能已经在 Quit 之前完成，仍按文件是否存在来判定结果，
-            // 不因为退出这一步崩溃就把已经成功的转换判定为失败。
-        } else {
-            logStep("Quit returned");
-        }
+        }, "Word Quit");
+        logStep("Quit returned");
         delete wordApp;
 
         bool pdfExists = QFile::exists(outputPdfPath);
