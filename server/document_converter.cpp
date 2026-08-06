@@ -249,7 +249,11 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
         return result;
     }
 
-    QString pdfPath = tempDir.path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf";
+    // 使用固定的输出文件名，不从原始文档名派生——Word 的 ExportAsFixedFormat
+    // 在输出路径含有 '#' 等特殊字符时会触发 0xC0000005 访问违例崩溃，
+    // 而 Documents.Open（输入路径）对同样的路径却没有问题，说明这是
+    // ExportAsFixedFormat 特有的行为，用干净的路径即可规避。
+    QString pdfPath = tempDir.path() + "/output.pdf";
 
     // 转换完全在独立子进程 CrossNetShareWordHelper.exe 里进行，详见文件顶部
     // runWordHelperProcess() 的说明。这里的服务端线程只是启动它、限时等待。
@@ -327,8 +331,8 @@ QString DocumentConverter::convertWordToJpg(const QString& filePath, const QStri
 #ifdef Q_OS_WIN
     QDir().mkpath(outputDir);
 
-    QString baseName = QFileInfo(filePath).completeBaseName();
-    QString tempPdfPath = outputDir + "/" + baseName + "_temp.pdf";
+    // 使用固定输出名，避免原文件名中的 '#' 等字符导致 ExportAsFixedFormat 崩溃
+    QString tempPdfPath = outputDir + "/output_temp.pdf";
 
     // 转换完全在独立子进程 CrossNetShareWordHelper.exe 里进行，详见文件顶部
     // runWordHelperProcess() 的说明。
