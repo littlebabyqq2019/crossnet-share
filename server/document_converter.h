@@ -2,6 +2,11 @@
 
 #include <QString>
 #include <QByteArray>
+#include <QMutex>
+
+#ifdef Q_OS_WIN
+class QAxObject;
+#endif
 
 namespace CrossNetShare {
 
@@ -29,11 +34,18 @@ private:
     static PreviewResult previewImage(const QString& filePath);
     static PreviewResult previewPdf(const QString& filePath);
     static PreviewResult previewWord(const QString& filePath);
+    static PreviewResult convertWordWithLibreOffice(const QString& filePath);
     static PreviewResult convertWordWithMicrosoftWord(const QString& filePath);
+    static QString findLibreOffice();
     static QByteArray htmlEscape(const QString& text);
 
     static QString getCachePath(const QString& filePath);
     static bool isCacheValid(const QString& cachePath, const QString& originalPath);
+
+#ifdef Q_OS_WIN
+    static QAxObject* wordApp;
+    static QMutex wordMutex;
+#endif
 };
 
 }

@@ -1,115 +1,90 @@
 #include "document_converter.h"
-#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QMap>
 #include <QProcess>
+#include <QProcessEnvironment>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextCodec>
+#include <QUrl>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
-#include <memory>
+#ifdef Q_OS_WIN
+#include <QAxObject>
+#endif
 
 namespace CrossNetShare {
 
+#ifdef Q_OS_WIN
+QAxObject* DocumentConverter::wordApp = nullptr;
+QMutex DocumentConverter::wordMutex;
+#endif
+
 namespace {
 
-#ifdef Q_OS_WIN
-// Word 的自动化接口本质上是一个进程外 COM 服务器（WINWORD.EXE）。之前两次
-// "进程内隔离"的尝试——看门狗强杀 WINWORD.EXE、把 COM 调用挪到服务端进程内
-// 的专用线程——实测都会在 Word 假死/崩溃时导致服务端主进程本身毫无提示地
-// 整体消失：只要 COM 调用发生在服务端自己的进程地址空间内，一次跨进程 RPC
-// 失联就可能以未处理的结构化异常波及整个进程，任何线程级隔离都无法根治。
-//
-// 真正安全的隔离是进程级的：把"打开 Word 文档→导出 PDF"这个操作整个放进一个
-// 独立的辅助程序 CrossNetShareWordHelper.exe（见 server/word_pdf_helper.cpp）
-// 里执行。服务端通过 QProcess 启动它、限时等待其退出；无论它卡死、崩溃还是
-// 被服务端强制终止，都只影响这一个独立的子进程，操作系统保证不会波及服务端
-// 主进程的任何线程或状态。
-QString wordHelperExecutablePath() {
-    return QDir(QCoreApplication::applicationDirPath()).filePath("CrossNetShareWordHelper.exe");
+void addLibreOfficeCandidate(QStringList& candidates, const QString& candidate) {
+    QString path = QDir::fromNativeSeparators(candidate.trimmed());
+    if (path.isEmpty()) {
+        return;
+    }
+    if (path.size() >= 2 && path.startsWith('"') && path.endsWith('"')) {
+        path = path.mid(1, path.size() - 2);
+    }
+
+    QFileInfo info(path);
+    QStringList paths;
+    if (info.isDir()) {
+        paths << path + "/soffice.exe" << path + "/program/soffice.exe" << path + "/soffice" << path + "/program/soffice";
+    } else {
+        paths << path;
+    }
+
+    for (const QString& item : paths) {
+        QString clean = QDir::cleanPath(item);
+        if (!clean.isEmpty() && !candidates.contains(clean, Qt::CaseInsensitive)) {
+            candidates << clean;
+        }
+    }
 }
 
-// 读取辅助进程写入的逐步执行日志（见 server/word_pdf_helper.cpp 中的
-// logStep()），用于在报错信息里直接暴露它具体执行到了哪一步、卡在哪一步。
-// 每次调用后清空文件，避免把上一次运行的日志和本次的混在一起。
-QString takeWordHelperLog() {
-    QString logPath = QDir::temp().filePath("crossnet_word_helper.log");
-    QFile logFile(logPath);
-    QString content;
-    if (logFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        content = QString::fromUtf8(logFile.readAll());
-        logFile.close();
+QString processDetails(QProcess& process) {
+    QStringList details;
+    QString stdoutText = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
+    QString stderrText = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+
+    if (!stdoutText.isEmpty()) {
+        details << "stdout: " + stdoutText;
     }
-    QFile::remove(logPath);
-    return content;
+    if (!stderrText.isEmpty()) {
+        details << "stderr: " + stderrText;
+    }
+
+    return details.join('\n');
 }
 
-// 启动辅助进程转换一次文档，最多等待 timeoutMs。
-// 返回值：true 表示辅助进程在超时前正常退出（具体成功/失败还要看 errorOut
-// 和调用方对输出文件的检查）；false 表示超时，此时会强制终止这个独立子进程
-// ——这是完全安全的操作，因为它是一个与服务端毫无共享状态的外部进程。
-bool runWordHelperProcess(const QString& inputPath, const QString& outputPdfPath,
-                           int timeoutMs, QString& errorOut) {
-    QString helperPath = wordHelperExecutablePath();
-    if (!QFile::exists(helperPath)) {
-        errorOut = "CrossNetShareWordHelper.exe not found next to the server executable";
-        return false;
-    }
-
-    // 清掉上一次运行残留的日志，确保下面读到的是本次运行产生的内容。
-    takeWordHelperLog();
-
-    QProcess process;
-    process.start(helperPath, {inputPath, outputPdfPath});
-    if (!process.waitForStarted(10000)) {
-        errorOut = "Failed to start CrossNetShareWordHelper.exe: " + process.errorString();
-        return false;
-    }
-
-    if (!process.waitForFinished(timeoutMs)) {
-        qDebug() << "[DocumentConverter] Word helper process did not exit within" << timeoutMs
-                  << "ms, killing it (server process is unaffected)";
-        process.kill();
-        process.waitForFinished(5000);
-        errorOut = "Microsoft Word became unresponsive while converting the document\nSteps log:\n" + takeWordHelperLog();
-        return false;
-    }
-
-    QString stepsLog = takeWordHelperLog();
-
-    if (process.exitStatus() != QProcess::NormalExit) {
-        errorOut = "Word helper process crashed\nSteps log:\n" + stepsLog;
-        return false;
-    }
-
-    int exitCode = process.exitCode();
-    if (exitCode != 0) {
-        static const QMap<int, QString> exitCodeMeanings = {
-            {1, "Invalid arguments"},
-            {2, "Failed to start Microsoft Word"},
-            {3, "Failed to access Word Documents collection"},
-            {4, "Failed to open the document"},
-            {5, "Word did not generate a PDF file"},
-            {9, "Microsoft Word raised a structured exception during automation (see steps log for which call)"},
-        };
-        errorOut = "Word helper process failed: " + exitCodeMeanings.value(exitCode, "Unknown error " + QString::number(exitCode))
-                   + "\nSteps log:\n" + stepsLog;
-        return false;
-    }
-
-    return true;
+QString withDetails(const QString& message, const QString& details) {
+    return details.isEmpty() ? message : message + "\n" + details;
 }
-#endif
 
 }
 
 void DocumentConverter::initialize() {
-    // Word 转换现在完全由独立的 CrossNetShareWordHelper.exe 子进程按需
-    // 执行（见 runWordHelperProcess），这里不再需要预热任何东西，只确保
-    // 预览缓存目录存在。
+#ifdef Q_OS_WIN
+    QMutexLocker locker(&wordMutex);
+    if (!wordApp) {
+        wordApp = new QAxObject("Word.Application");
+        if (!wordApp->isNull()) {
+            wordApp->setProperty("Visible", false);
+            wordApp->setProperty("DisplayAlerts", 0);
+        } else {
+            delete wordApp;
+            wordApp = nullptr;
+        }
+    }
+#endif
 
     QDir cacheDir(QDir::temp().filePath("crossnet_preview_cache"));
     if (!cacheDir.exists()) {
@@ -118,8 +93,14 @@ void DocumentConverter::initialize() {
 }
 
 void DocumentConverter::cleanup() {
-    // 每次转换都是一次性启动、转换、退出的独立子进程（见
-    // runWordHelperProcess），没有常驻的 Word 实例需要在此关闭。
+#ifdef Q_OS_WIN
+    QMutexLocker locker(&wordMutex);
+    if (wordApp) {
+        wordApp->dynamicCall("Quit()");
+        delete wordApp;
+        wordApp = nullptr;
+    }
+#endif
 }
 
 DocumentConverter::PreviewResult DocumentConverter::previewFile(const QString& filePath) {
@@ -231,8 +212,28 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
             cacheFile.write(wordResult.data);
             cacheFile.close();
         }
+        return wordResult;
     }
-    return wordResult;
+
+    QFile checkFile(filePath);
+    if (checkFile.open(QIODevice::ReadOnly)) {
+        QByteArray header = checkFile.read(512);
+        if (header.contains("<?xml") && header.contains("wordDocument")) {
+            return wordResult;
+        }
+    }
+
+    PreviewResult libreOfficeResult = convertWordWithLibreOffice(filePath);
+    if (libreOfficeResult.success) {
+        QFile cacheFile(cachePath);
+        if (cacheFile.open(QIODevice::WriteOnly)) {
+            cacheFile.write(libreOfficeResult.data);
+            cacheFile.close();
+        }
+    } else if (!wordResult.error.isEmpty()) {
+        libreOfficeResult.error = "Microsoft Word conversion failed: " + wordResult.error + "\nLibreOffice fallback failed: " + libreOfficeResult.error;
+    }
+    return libreOfficeResult;
 }
 
 DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord(const QString& filePath) {
@@ -242,6 +243,14 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
     result.error = "Microsoft Word COM conversion is only available on Windows";
     return result;
 #else
+    QMutexLocker locker(&wordMutex);
+
+    if (!wordApp || wordApp->isNull()) {
+        result.success = false;
+        result.error = "Microsoft Word is not initialized. Call DocumentConverter::initialize() first.";
+        return result;
+    }
+
     QTemporaryDir tempDir(QDir::temp().filePath("crossnet_word_preview_XXXXXX"));
     if (!tempDir.isValid()) {
         result.success = false;
@@ -249,22 +258,30 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
         return result;
     }
 
-    // 使用固定的输出文件名，不从原始文档名派生——Word 的 ExportAsFixedFormat
-    // 在输出路径含有 '#' 等特殊字符时会触发 0xC0000005 访问违例崩溃，
-    // 而 Documents.Open（输入路径）对同样的路径却没有问题，说明这是
-    // ExportAsFixedFormat 特有的行为，用干净的路径即可规避。
-    QString pdfPath = tempDir.path() + "/output.pdf";
+    QString pdfPath = tempDir.path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf";
+    QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
+    QString nativePdfPath = QDir::toNativeSeparators(pdfPath);
 
-    // 转换完全在独立子进程 CrossNetShareWordHelper.exe 里进行，详见文件顶部
-    // runWordHelperProcess() 的说明。这里的服务端线程只是启动它、限时等待。
-    QString helperError;
-    bool completed = runWordHelperProcess(filePath, pdfPath, 30000, helperError);
-
-    if (!completed) {
+    QAxObject* documents = wordApp->querySubObject("Documents");
+    if (!documents) {
         result.success = false;
-        result.error = helperError;
+        result.error = "Failed to access Microsoft Word Documents collection";
         return result;
     }
+
+    QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
+        nativeInputPath, false, true, false);
+
+    if (!document) {
+        result.success = false;
+        result.error = "Microsoft Word failed to open the document";
+        return result;
+    }
+
+    document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
+        nativePdfPath, 17);
+
+    document->dynamicCall("Close(bool)", false);
 
     QFile pdfFile(pdfPath);
     if (!pdfFile.open(QIODevice::ReadOnly)) {
@@ -278,6 +295,121 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
     result.data = pdfFile.readAll();
     return result;
 #endif
+}
+
+DocumentConverter::PreviewResult DocumentConverter::convertWordWithLibreOffice(const QString& filePath) {
+    PreviewResult result;
+    QString libreOffice = findLibreOffice();
+    if (libreOffice.isEmpty()) {
+        result.success = false;
+        result.error = "LibreOffice not found on server. Install LibreOffice on computer A and ensure soffice.exe can be found.";
+        return result;
+    }
+
+    QTemporaryDir tempDir(QDir::temp().filePath("crossnet_preview_XXXXXX"));
+    if (!tempDir.isValid()) {
+        result.success = false;
+        result.error = "Failed to create temporary conversion directory";
+        return result;
+    }
+
+    QTemporaryDir profileDir(QDir::temp().filePath("crossnet_lo_profile_XXXXXX"));
+    if (!profileDir.isValid()) {
+        result.success = false;
+        result.error = "Failed to create temporary LibreOffice profile";
+        return result;
+    }
+
+    QProcess process;
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert("SAL_USE_VCLPLUGIN", "svp");
+    process.setProcessEnvironment(environment);
+    process.setWorkingDirectory(tempDir.path());
+
+    QStringList args;
+    args << "--headless"
+         << "--invisible"
+         << "--nologo"
+         << "--nofirststartwizard"
+         << "--nodefault"
+         << "--nolockcheck"
+         << "-env:UserInstallation=" + QUrl::fromLocalFile(profileDir.path()).toString()
+         << "--convert-to"
+         << "pdf"
+         << "--outdir"
+         << tempDir.path()
+         << filePath;
+
+    process.start(libreOffice, args);
+    if (!process.waitForStarted(10000)) {
+        result.success = false;
+        result.error = "Failed to start LibreOffice: " + process.errorString();
+        return result;
+    }
+
+    if (!process.waitForFinished(60000)) {
+        process.kill();
+        process.waitForFinished(5000);
+        result.success = false;
+        result.error = withDetails("LibreOffice conversion timed out", processDetails(process));
+        return result;
+    }
+
+    QString details = processDetails(process);
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        result.success = false;
+        result.error = withDetails(QString("LibreOffice conversion failed with exit code %1").arg(process.exitCode()), details);
+        return result;
+    }
+
+    QString pdfPath = tempDir.path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf";
+    QFile pdfFile(pdfPath);
+    if (!pdfFile.open(QIODevice::ReadOnly)) {
+        QStringList generatedFiles = QDir(tempDir.path()).entryList(QDir::Files | QDir::NoDotAndDotDot);
+        result.success = false;
+        result.error = withDetails("Converted PDF file not found", "Generated files: " + generatedFiles.join(", ") + (details.isEmpty() ? QString() : "\n" + details));
+        return result;
+    }
+
+    result.success = true;
+    result.mimeType = "application/pdf";
+    result.data = pdfFile.readAll();
+    return result;
+}
+
+QString DocumentConverter::findLibreOffice() {
+    QStringList candidates;
+    QString found = QStandardPaths::findExecutable("soffice");
+    if (!found.isEmpty()) {
+        return found;
+    }
+
+    addLibreOfficeCandidate(candidates, qEnvironmentVariable("PROGRAMFILES") + "/LibreOffice/program/soffice.exe");
+    addLibreOfficeCandidate(candidates, qEnvironmentVariable("PROGRAMFILES(X86)") + "/LibreOffice/program/soffice.exe");
+    addLibreOfficeCandidate(candidates, qEnvironmentVariable("PROGRAMW6432") + "/LibreOffice/program/soffice.exe");
+    addLibreOfficeCandidate(candidates, "C:/Program Files/LibreOffice/program/soffice.exe");
+    addLibreOfficeCandidate(candidates, "C:/Program Files (x86)/LibreOffice/program/soffice.exe");
+
+#ifdef Q_OS_WIN
+    const QStringList registryKeys = {
+        "HKEY_LOCAL_MACHINE\\SOFTWARE\\LibreOffice\\UNO\\InstallPath",
+        "HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\LibreOffice\\UNO\\InstallPath",
+        "HKEY_CURRENT_USER\\SOFTWARE\\LibreOffice\\UNO\\InstallPath"
+    };
+
+    for (const QString& key : registryKeys) {
+        QSettings settings(key, QSettings::NativeFormat);
+        addLibreOfficeCandidate(candidates, settings.value(".").toString());
+    }
+#endif
+
+    for (const QString& candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+
+    return QString();
 }
 
 QByteArray DocumentConverter::htmlEscape(const QString& text) {
@@ -329,20 +461,42 @@ void DocumentConverter::cleanupCache() {
 
 QString DocumentConverter::convertWordToJpg(const QString& filePath, const QString& outputDir) {
 #ifdef Q_OS_WIN
-    QDir().mkpath(outputDir);
+    QMutexLocker locker(&wordMutex);
 
-    // 使用固定输出名，避免原文件名中的 '#' 等字符导致 ExportAsFixedFormat 崩溃
-    QString tempPdfPath = outputDir + "/output_temp.pdf";
-
-    // 转换完全在独立子进程 CrossNetShareWordHelper.exe 里进行，详见文件顶部
-    // runWordHelperProcess() 的说明。
-    QString helperError;
-    bool completed = runWordHelperProcess(filePath, tempPdfPath, 30000, helperError);
-
-    if (!completed) {
-        qDebug() << "Word conversion failed:" << helperError;
+    if (!wordApp || wordApp->isNull()) {
+        qDebug() << "Microsoft Word not available for conversion";
         return QString();
     }
+
+    QDir().mkpath(outputDir);
+
+    QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
+    QString baseName = QFileInfo(filePath).completeBaseName();
+    QString outputPath = outputDir + "/" + baseName + ".png";
+    QString nativeOutputPath = QDir::toNativeSeparators(outputPath);
+
+    QAxObject* documents = wordApp->querySubObject("Documents");
+    if (!documents) {
+        qDebug() << "Failed to access Word Documents";
+        return QString();
+    }
+
+    QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
+        nativeInputPath, false, true, false);
+
+    if (!document) {
+        qDebug() << "Failed to open document in Word";
+        return QString();
+    }
+
+    // 导出高质量 PDF
+    QString tempPdfPath = outputDir + "/" + baseName + "_temp.pdf";
+    QString nativeTempPdfPath = QDir::toNativeSeparators(tempPdfPath);
+
+    document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
+        nativeTempPdfPath, 17);
+
+    document->dynamicCall("Close(bool)", false);
 
     if (!QFile::exists(tempPdfPath)) {
         qDebug() << "Failed to generate PDF";
