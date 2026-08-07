@@ -209,38 +209,15 @@ int main(int argc, char* argv[]) {
             return;
         }
 
-        // Document.ExportAsFixedFormat 的完整参数列表（除末尾 Object 类型的
-        // FixedFormatExtClassPtr 外）。之前只传了前 2 个参数、其余全部依赖
-        // Word 的可选参数默认值——这是通过 IDispatch::Invoke 晚绑定调用该
-        // 方法时一个有据可查的已知隐患：Word 对该方法可选参数的晚绑定处理
-        // 不够健壮，省略参数在某些环境下会导致 Word 自动化层内部崩溃
-        // （与本次实测的崩溃位置完全一致）。显式传入全部参数是文档化的
-        // 规避方式：
-        //   ExportFormat=17 (wdExportFormatPDF)
-        //   OpenAfterExport=false
-        //   OptimizeFor=0   (wdExportOptimizeForPrint)
-        //   Range=0         (wdExportAllDocument)
-        //   From=1, To=1    (Range 为整份文档时被忽略，但仍须提供取值)
-        //   Item=0          (wdExportDocumentContent)
-        //   IncludeDocProps=true
-        //   KeepIRM=true
-        //   CreateBookmarks=0 (wdExportCreateNoBookmarks)
-        //   DocStructureTags=true
-        //   BitmapMissingFonts=true
-        //   UseISO19005_1=false（不强制 PDF/A，保持导出效果与之前一致）
-        logStep("calling ExportAsFixedFormat to \"" + nativeOutputPath + "\"...");
-        // QAxBase::dynamicCall 的定长重载最多只接受 8 个变体参数（加方法名
-        // 共 9 个），这个方法需要 14 个参数，必须使用 QList<QVariant> 形式
-        // 的重载。
-        QList<QVariant> exportArgs = {
-            nativeOutputPath, 17, false, 0, 0, 1, 1, 0, true, true, 0, true, true, false
-        };
+        logStep("calling SaveAs2 to \"" + nativeOutputPath + "\" (FileFormat=17 wdFormatPDF)...");
         runGuardedOrDie([&]() {
-            document->dynamicCall(
-                "ExportAsFixedFormat(const QString&, int, bool, int, int, int, int, int, bool, bool, int, bool, bool, bool)",
-                exportArgs);
-        }, "ExportAsFixedFormat");
-        logStep("ExportAsFixedFormat returned, calling Close...");
+            // SaveAs2(FileName, FileFormat) — 17 = wdFormatPDF.
+            // 用 SaveAs2 代替 ExportAsFixedFormat：实测后者在某些 Word 安装上
+            // 一被调用就立刻抛出 0xC0000005（还没开始实际转换就崩），SaveAs2 走
+            // 完全不同的内部代码路径，参数更少，通常更稳定。
+            document->dynamicCall("SaveAs2(const QString&, int)", nativeOutputPath, 17);
+        }, "SaveAs2");
+        logStep("SaveAs2 returned, calling Close...");
 
         runGuardedOrDie([&]() {
             document->dynamicCall("Close(bool)", false);
