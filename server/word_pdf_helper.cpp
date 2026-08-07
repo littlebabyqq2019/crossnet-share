@@ -179,6 +179,47 @@ int main(int argc, char* argv[]) {
         wordApp->setProperty("DisplayAlerts", 0);
         logStep("Word.Application configured (Visible=false, DisplayAlerts=0)");
 
+        // 禁用所有 Word 加载项。用户机器上常见的 PDF 工具类插件（Adobe
+        // Acrobat、Foxit、Kingsoft 等）或企业 DLP/审计类插件会 hook 文档
+        // 保存/导出操作。这些插件在有 UI 的 Word GUI 环境下运行正常，但
+        // 在无窗口的 COM 自动化环境下有时会瞬间崩溃在保存/导出的入口处
+        // ——实测现象完全吻合：ExportAsFixedFormat 与 SaveAs2 走完全不同
+        // 的内部代码路径，却都在被调用后 0ms 内立刻抛出 0xC0000005，说明
+        // 崩溃发生在被两个方法共同触发的、位于它们入口之前的加载项 hook 里。
+        // 把加载项禁用后，SaveAs2 走的纯净路径就不会再被外部代码打断。
+        runGuardedOrDie([&]() {
+            QAxObject* comAddIns = wordApp->querySubObject("COMAddIns");
+            if (comAddIns) {
+                int count = comAddIns->property("Count").toInt();
+                for (int i = 1; i <= count; i++) {
+                    QAxObject* addIn = comAddIns->querySubObject("Item(int)", i);
+                    if (addIn) {
+                        addIn->setProperty("Connect", false);
+                        delete addIn;
+                    }
+                }
+                delete comAddIns;
+                char buf[128];
+                sprintf_s(buf, sizeof(buf), "disabled %d COM add-in(s)", count);
+                logStep(buf);
+            }
+            QAxObject* addIns = wordApp->querySubObject("AddIns");
+            if (addIns) {
+                int count = addIns->property("Count").toInt();
+                for (int i = 1; i <= count; i++) {
+                    QAxObject* addIn = addIns->querySubObject("Item(int)", i);
+                    if (addIn) {
+                        addIn->setProperty("Installed", false);
+                        delete addIn;
+                    }
+                }
+                delete addIns;
+                char buf[128];
+                sprintf_s(buf, sizeof(buf), "disabled %d template add-in(s)", count);
+                logStep(buf);
+            }
+        }, "disabling add-ins");
+
         logStep("querying Documents collection...");
         QAxObject* documents = nullptr;
         runGuardedOrDie([&]() {
