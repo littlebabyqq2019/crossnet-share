@@ -731,9 +731,16 @@ void WebServer::handleFilePreview(QTcpSocket* socket, const HttpRequest& request
         }
 
         if (result.success) {
-            // 将文件数据写入临时文件用于预览
+            // 将文件数据写入临时文件用于预览。
+            // 临时文件名只保留原始扩展名，不带原始文件名——原始名可能含有
+            // Word 的 ExportAsFixedFormat 在导出时会解引用崩溃的字符
+            // （比如 '#'、中文字符组合，实测导致 0xC0000005 硬件级异常）。
+            // DocumentConverter::previewFile() 只根据扩展名判断文件类型，
+            // 所以只需要保留扩展名即可。
             QString uniqueId = QDateTime::currentDateTime().toString("yyyyMMddHHmmsszzz");
-            QString tempPath = QDir::temp().filePath("preview_" + uniqueId + "_" + QFileInfo(relativePathCapture).fileName());
+            QString suffix = QFileInfo(relativePathCapture).suffix();
+            QString tempPath = QDir::temp().filePath(
+                "preview_" + uniqueId + (suffix.isEmpty() ? QString() : "." + suffix));
             QFile tempFile(tempPath);
             if (tempFile.open(QIODevice::WriteOnly)) {
                 tempFile.write(result.data);
