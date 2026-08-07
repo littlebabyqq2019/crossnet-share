@@ -51,6 +51,7 @@ jobs:
         cd build/bin/Release
         & "${{ env.Qt5_DIR }}/bin/windeployqt.exe" --release CrossNetShareServer.exe
         & "${{ env.Qt5_DIR }}/bin/windeployqt.exe" --release CrossNetShareClient.exe
+        & "${{ env.Qt5_DIR }}/bin/windeployqt.exe" --release CrossNetShareWordHelper.exe
 
     - name: Package Release
       run: |
@@ -60,6 +61,7 @@ jobs:
 
         # 复制服务器
         Copy-Item build/bin/Release/CrossNetShareServer.exe CrossNetShare-Release/Server/
+        Copy-Item build/bin/Release/CrossNetShareWordHelper.exe CrossNetShare-Release/Server/ -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/*.dll CrossNetShare-Release/Server/ -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/platforms CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/styles CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue

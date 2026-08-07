@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(CrossNetShare VERSION 1.3.0 LANGUAGES CXX)
+project(CrossNetShare VERSION 1.2.15 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -122,6 +122,19 @@ target_link_libraries(CrossNetShareServer
     PRIVATE Qt5::Widgets
     PRIVATE Qt5::Network
 )
+
+# Word→PDF 转换辅助程序（仅 Windows）：独立进程运行 Word COM 自动化，
+# 与服务端主进程完全隔离。详见 server/word_pdf_helper.cpp 顶部注释。
+if(WIN32)
+    add_executable(CrossNetShareWordHelper WIN32
+        server/word_pdf_helper.cpp
+    )
+    target_link_libraries(CrossNetShareWordHelper
+        PRIVATE Qt5::Core
+        PRIVATE Qt5::Widgets
+        PRIVATE Qt5::AxContainer
+    )
+endif()
 
 # 客户端
 if(WIN32)
