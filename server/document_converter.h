@@ -38,6 +38,11 @@ private:
     static PreviewResult convertWordWithMicrosoftWord(const QString& filePath);
     static QString findLibreOffice();
     static QByteArray htmlEscape(const QString& text);
+    
+#ifdef Q_OS_WIN
+    static bool reinitializeWord();
+    static bool isWordHealthy();
+#endif
 
     static QString getCachePath(const QString& filePath);
     static bool isCacheValid(const QString& cachePath, const QString& originalPath);

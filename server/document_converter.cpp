@@ -103,6 +103,52 @@ void DocumentConverter::cleanup() {
 #endif
 }
 
+#ifdef Q_OS_WIN
+bool DocumentConverter::reinitializeWord() {
+    qDebug() << "Reinitializing Microsoft Word...";
+    
+    // 清理旧实例
+    if (wordApp) {
+        try {
+            wordApp->dynamicCall("Quit()");
+        } catch (...) {
+            // 忽略退出时的异常
+        }
+        delete wordApp;
+        wordApp = nullptr;
+    }
+    
+    // 创建新实例
+    wordApp = new QAxObject("Word.Application");
+    if (!wordApp->isNull()) {
+        wordApp->setProperty("Visible", false);
+        wordApp->setProperty("DisplayAlerts", 0);
+        qDebug() << "Microsoft Word reinitialized successfully";
+        return true;
+    } else {
+        delete wordApp;
+        wordApp = nullptr;
+        qDebug() << "Failed to reinitialize Microsoft Word";
+        return false;
+    }
+}
+
+bool DocumentConverter::isWordHealthy() {
+    if (!wordApp || wordApp->isNull()) {
+        return false;
+    }
+    
+    // 尝试访问Documents集合来检查Word是否健康
+    QAxObject* documents = wordApp->querySubObject("Documents");
+    if (!documents) {
+        return false;
+    }
+    
+    delete documents;
+    return true;
+}
+#endif
+
 DocumentConverter::PreviewResult DocumentConverter::previewFile(const QString& filePath) {
     QFileInfo info(filePath);
     QString suffix = info.suffix().toLower();
@@ -245,54 +291,114 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
 #else
     QMutexLocker locker(&wordMutex);
 
+    // 首次调用或Word未初始化
     if (!wordApp || wordApp->isNull()) {
         result.success = false;
         result.error = "Microsoft Word is not initialized. Call DocumentConverter::initialize() first.";
         return result;
     }
 
-    QTemporaryDir tempDir(QDir::temp().filePath("crossnet_word_preview_XXXXXX"));
-    if (!tempDir.isValid()) {
-        result.success = false;
-        result.error = "Failed to create temporary Word conversion directory";
+    // 重试机制：最多尝试2次
+    const int maxRetries = 2;
+    for (int attempt = 1; attempt <= maxRetries; ++attempt) {
+        // 从第二次尝试开始，先检查Word健康状态
+        if (attempt > 1) {
+            qDebug() << "Attempt" << attempt << "to convert Word document";
+            if (!isWordHealthy()) {
+                qDebug() << "Word is unhealthy, reinitializing...";
+                if (!reinitializeWord()) {
+                    result.success = false;
+                    result.error = "Failed to reinitialize Microsoft Word after connection loss";
+                    return result;
+                }
+            }
+        }
+
+        QTemporaryDir tempDir(QDir::temp().filePath("crossnet_word_preview_XXXXXX"));
+        if (!tempDir.isValid()) {
+            result.success = false;
+            result.error = "Failed to create temporary Word conversion directory";
+            return result;
+        }
+
+        QString pdfPath = tempDir.path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf";
+        QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
+        QString nativePdfPath = QDir::toNativeSeparators(pdfPath);
+
+        QAxObject* documents = wordApp->querySubObject("Documents");
+        if (!documents) {
+            qDebug() << "Failed to access Microsoft Word Documents collection on attempt" << attempt;
+            
+            // 如果还有重试机会，继续循环
+            if (attempt < maxRetries) {
+                // 标记Word不健康，下次循环会重新初始化
+                continue;
+            }
+            
+            result.success = false;
+            result.error = "Failed to access Microsoft Word Documents collection";
+            return result;
+        }
+
+        QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
+            nativeInputPath, false, true, false);
+
+        if (!document) {
+            delete documents;
+            
+            if (attempt < maxRetries) {
+                qDebug() << "Failed to open document on attempt" << attempt << ", retrying...";
+                continue;
+            }
+            
+            result.success = false;
+            result.error = "Microsoft Word failed to open the document";
+            return result;
+        }
+
+        // 转换为PDF
+        bool exportSuccess = false;
+        try {
+            document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
+                nativePdfPath, 17);
+            exportSuccess = true;
+        } catch (...) {
+            qDebug() << "Exception during ExportAsFixedFormat on attempt" << attempt;
+        }
+
+        document->dynamicCall("Close(bool)", false);
+        delete documents;
+
+        if (!exportSuccess) {
+            if (attempt < maxRetries) {
+                continue;
+            }
+            result.success = false;
+            result.error = "Microsoft Word failed to export PDF";
+            return result;
+        }
+
+        QFile pdfFile(pdfPath);
+        if (!pdfFile.open(QIODevice::ReadOnly)) {
+            if (attempt < maxRetries) {
+                continue;
+            }
+            result.success = false;
+            result.error = "Microsoft Word did not generate a PDF file";
+            return result;
+        }
+
+        // 成功！
+        result.success = true;
+        result.mimeType = "application/pdf";
+        result.data = pdfFile.readAll();
+        qDebug() << "Word document converted successfully on attempt" << attempt;
         return result;
     }
 
-    QString pdfPath = tempDir.path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf";
-    QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
-    QString nativePdfPath = QDir::toNativeSeparators(pdfPath);
-
-    QAxObject* documents = wordApp->querySubObject("Documents");
-    if (!documents) {
-        result.success = false;
-        result.error = "Failed to access Microsoft Word Documents collection";
-        return result;
-    }
-
-    QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
-        nativeInputPath, false, true, false);
-
-    if (!document) {
-        result.success = false;
-        result.error = "Microsoft Word failed to open the document";
-        return result;
-    }
-
-    document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
-        nativePdfPath, 17);
-
-    document->dynamicCall("Close(bool)", false);
-
-    QFile pdfFile(pdfPath);
-    if (!pdfFile.open(QIODevice::ReadOnly)) {
-        result.success = false;
-        result.error = "Microsoft Word did not generate a PDF file";
-        return result;
-    }
-
-    result.success = true;
-    result.mimeType = "application/pdf";
-    result.data = pdfFile.readAll();
+    // 不应该到达这里，但为了安全
+    result.success = false;
+    result.error = "Failed to convert Word document after multiple attempts";
     return result;
 #endif
 }
@@ -468,6 +574,15 @@ QString DocumentConverter::convertWordToJpg(const QString& filePath, const QStri
         return QString();
     }
 
+    // 检查Word健康状态，如果不健康则重新初始化
+    if (!isWordHealthy()) {
+        qDebug() << "Word is unhealthy in convertWordToJpg, reinitializing...";
+        if (!reinitializeWord()) {
+            qDebug() << "Failed to reinitialize Word in convertWordToJpg";
+            return QString();
+        }
+    }
+
     QDir().mkpath(outputDir);
 
     QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
@@ -478,7 +593,17 @@ QString DocumentConverter::convertWordToJpg(const QString& filePath, const QStri
     QAxObject* documents = wordApp->querySubObject("Documents");
     if (!documents) {
         qDebug() << "Failed to access Word Documents";
-        return QString();
+        
+        // 尝试重新初始化
+        if (reinitializeWord()) {
+            documents = wordApp->querySubObject("Documents");
+            if (!documents) {
+                qDebug() << "Failed to access Word Documents after reinitialization";
+                return QString();
+            }
+        } else {
+            return QString();
+        }
     }
 
     QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
@@ -486,6 +611,7 @@ QString DocumentConverter::convertWordToJpg(const QString& filePath, const QStri
 
     if (!document) {
         qDebug() << "Failed to open document in Word";
+        delete documents;
         return QString();
     }
 
@@ -497,6 +623,7 @@ QString DocumentConverter::convertWordToJpg(const QString& filePath, const QStri
         nativeTempPdfPath, 17);
 
     document->dynamicCall("Close(bool)", false);
+    delete documents;
 
     if (!QFile::exists(tempPdfPath)) {
         qDebug() << "Failed to generate PDF";
