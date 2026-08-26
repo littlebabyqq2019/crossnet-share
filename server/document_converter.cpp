@@ -12,6 +12,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
+#include <QThread>
 #ifdef Q_OS_WIN
 #include <QAxObject>
 #endif
@@ -21,6 +22,7 @@ namespace CrossNetShare {
 #ifdef Q_OS_WIN
 QAxObject* DocumentConverter::wordApp = nullptr;
 QMutex DocumentConverter::wordMutex;
+qint64 DocumentConverter::wordInitializedTime = 0;
 #endif
 
 namespace {
@@ -79,9 +81,12 @@ void DocumentConverter::initialize() {
         if (!wordApp->isNull()) {
             wordApp->setProperty("Visible", false);
             wordApp->setProperty("DisplayAlerts", 0);
+            wordInitializedTime = QDateTime::currentMSecsSinceEpoch();
+            qDebug() << "Microsoft Word initialized at" << QDateTime::currentDateTime().toString();
         } else {
             delete wordApp;
             wordApp = nullptr;
+            wordInitializedTime = 0;
         }
     }
 #endif
@@ -99,23 +104,49 @@ void DocumentConverter::cleanup() {
         wordApp->dynamicCall("Quit()");
         delete wordApp;
         wordApp = nullptr;
+        wordInitializedTime = 0;
     }
 #endif
 }
 
 #ifdef Q_OS_WIN
+bool DocumentConverter::shouldReinitializeWord() {
+    if (!wordApp || wordApp->isNull()) {
+        return true;
+    }
+    
+    // 检查Word运行时长，超过3小时则需要重启
+    if (wordInitializedTime > 0) {
+        qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
+        qint64 runtime = currentTime - wordInitializedTime;
+        
+        if (runtime > WORD_MAX_LIFETIME_MS) {
+            qDebug() << "Word instance has been running for" << (runtime / 1000 / 60) << "minutes, should reinitialize";
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 bool DocumentConverter::reinitializeWord() {
     qDebug() << "Reinitializing Microsoft Word...";
     
     // 清理旧实例
     if (wordApp) {
         try {
+            // 尝试快速退出，设置短超时
+            wordApp->setProperty("DisplayAlerts", 0);
             wordApp->dynamicCall("Quit()");
         } catch (...) {
-            // 忽略退出时的异常
+            qDebug() << "Exception during Word Quit, ignoring...";
         }
         delete wordApp;
         wordApp = nullptr;
+        wordInitializedTime = 0;
+        
+        // 给Windows一点时间清理COM对象
+        QThread::msleep(100);
     }
     
     // 创建新实例
@@ -123,11 +154,13 @@ bool DocumentConverter::reinitializeWord() {
     if (!wordApp->isNull()) {
         wordApp->setProperty("Visible", false);
         wordApp->setProperty("DisplayAlerts", 0);
-        qDebug() << "Microsoft Word reinitialized successfully";
+        wordInitializedTime = QDateTime::currentMSecsSinceEpoch();
+        qDebug() << "Microsoft Word reinitialized successfully at" << QDateTime::currentDateTime().toString();
         return true;
     } else {
         delete wordApp;
         wordApp = nullptr;
+        wordInitializedTime = 0;
         qDebug() << "Failed to reinitialize Microsoft Word";
         return false;
     }
@@ -298,6 +331,16 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
         return result;
     }
 
+    // 检查是否需要预防性重启（基于运行时长）
+    if (shouldReinitializeWord()) {
+        qDebug() << "Proactively reinitializing Word due to long runtime";
+        if (!reinitializeWord()) {
+            result.success = false;
+            result.error = "Failed to reinitialize Microsoft Word";
+            return result;
+        }
+    }
+
     // 重试机制：最多尝试2次
     const int maxRetries = 2;
     for (int attempt = 1; attempt <= maxRetries; ++attempt) {
@@ -392,7 +435,10 @@ DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord
         result.success = true;
         result.mimeType = "application/pdf";
         result.data = pdfFile.readAll();
-        qDebug() << "Word document converted successfully on attempt" << attempt;
+        
+        if (attempt > 1) {
+            qDebug() << "Word document converted successfully on attempt" << attempt;
+        }
         return result;
     }
 
@@ -572,6 +618,15 @@ QString DocumentConverter::convertWordToJpg(const QString& filePath, const QStri
     if (!wordApp || wordApp->isNull()) {
         qDebug() << "Microsoft Word not available for conversion";
         return QString();
+    }
+
+    // 检查是否需要预防性重启
+    if (shouldReinitializeWord()) {
+        qDebug() << "Proactively reinitializing Word in convertWordToJpg due to long runtime";
+        if (!reinitializeWord()) {
+            qDebug() << "Failed to reinitialize Word in convertWordToJpg";
+            return QString();
+        }
     }
 
     // 检查Word健康状态，如果不健康则重新初始化
