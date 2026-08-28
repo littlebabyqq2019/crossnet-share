@@ -34,9 +34,12 @@ private:
     static PreviewResult previewImage(const QString& filePath);
     static PreviewResult previewPdf(const QString& filePath);
     static PreviewResult previewWord(const QString& filePath);
+    static PreviewResult convertWordWithAspose(const QString& filePath);
     static PreviewResult convertWordWithLibreOffice(const QString& filePath);
     static PreviewResult convertWordWithMicrosoftWord(const QString& filePath);
     static QString findLibreOffice();
+    static QString findPython();
+    static QString findAsposeLicense();
     static QByteArray htmlEscape(const QString& text);
     
 #ifdef Q_OS_WIN

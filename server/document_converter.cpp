@@ -13,6 +13,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QThread>
+#include <QCoreApplication>
 #ifdef Q_OS_WIN
 #include <QAxObject>
 #endif
@@ -284,6 +285,18 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
         }
     }
 
+    // 优先尝试使用Aspose.Words（最稳定）
+    PreviewResult asposeResult = convertWordWithAspose(filePath);
+    if (asposeResult.success) {
+        QFile cacheFile(cachePath);
+        if (cacheFile.open(QIODevice::WriteOnly)) {
+            cacheFile.write(asposeResult.data);
+            cacheFile.close();
+        }
+        return asposeResult;
+    }
+
+    // 备选方案1: Microsoft Word COM
     PreviewResult wordResult = convertWordWithMicrosoftWord(filePath);
     if (wordResult.success) {
         QFile cacheFile(cachePath);
@@ -294,6 +307,7 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
         return wordResult;
     }
 
+    // 检查是否是损坏的Word文档
     QFile checkFile(filePath);
     if (checkFile.open(QIODevice::ReadOnly)) {
         QByteArray header = checkFile.read(512);
@@ -302,6 +316,7 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
         }
     }
 
+    // 备选方案2: LibreOffice
     PreviewResult libreOfficeResult = convertWordWithLibreOffice(filePath);
     if (libreOfficeResult.success) {
         QFile cacheFile(cachePath);
@@ -309,10 +324,112 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
             cacheFile.write(libreOfficeResult.data);
             cacheFile.close();
         }
-    } else if (!wordResult.error.isEmpty()) {
-        libreOfficeResult.error = "Microsoft Word conversion failed: " + wordResult.error + "\nLibreOffice fallback failed: " + libreOfficeResult.error;
+    } else {
+        // 合并所有错误信息
+        QStringList errors;
+        if (!asposeResult.error.isEmpty()) {
+            errors << "Aspose.Words: " + asposeResult.error;
+        }
+        if (!wordResult.error.isEmpty()) {
+            errors << "Microsoft Word: " + wordResult.error;
+        }
+        if (!libreOfficeResult.error.isEmpty()) {
+            errors << "LibreOffice: " + libreOfficeResult.error;
+        }
+        libreOfficeResult.error = errors.join("\n");
     }
     return libreOfficeResult;
+}
+
+DocumentConverter::PreviewResult DocumentConverter::convertWordWithAspose(const QString& filePath) {
+    PreviewResult result;
+    
+    // 查找Python解释器
+    QString python = findPython();
+    if (python.isEmpty()) {
+        result.success = false;
+        result.error = "Python not found. Please install Python 3.8 or later.";
+        return result;
+    }
+    
+    // 查找转换脚本
+    QString scriptPath = QCoreApplication::applicationDirPath() + "/word_to_pdf.py";
+    if (!QFileInfo::exists(scriptPath)) {
+        result.success = false;
+        result.error = "Aspose conversion script not found: " + scriptPath;
+        return result;
+    }
+    
+    // 创建临时目录
+    QTemporaryDir tempDir(QDir::temp().filePath("crossnet_aspose_XXXXXX"));
+    if (!tempDir.isValid()) {
+        result.success = false;
+        result.error = "Failed to create temporary Aspose conversion directory";
+        return result;
+    }
+    
+    // 生成输出PDF路径
+    QString pdfPath = tempDir.path() + "/" + QFileInfo(filePath).completeBaseName() + ".pdf";
+    
+    // 查找许可证文件
+    QString licensePath = findAsposeLicense();
+    
+    // 构建命令
+    QProcess process;
+    QStringList args;
+    args << scriptPath << filePath << pdfPath;
+    if (!licensePath.isEmpty()) {
+        args << licensePath;
+    }
+    
+    qDebug() << "Running Aspose.Words converter:" << python << args.join(" ");
+    
+    process.start(python, args);
+    if (!process.waitForStarted(10000)) {
+        result.success = false;
+        result.error = "Failed to start Aspose Python converter: " + process.errorString();
+        return result;
+    }
+    
+    if (!process.waitForFinished(60000)) {
+        process.kill();
+        process.waitForFinished(5000);
+        result.success = false;
+        result.error = "Aspose conversion timed out";
+        return result;
+    }
+    
+    QString stderr_output = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+    
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        result.success = false;
+        result.error = QString("Aspose conversion failed with exit code %1").arg(process.exitCode());
+        if (!stderr_output.isEmpty()) {
+            result.error += ": " + stderr_output;
+        }
+        return result;
+    }
+    
+    // 读取生成的PDF
+    QFile pdfFile(pdfPath);
+    if (!pdfFile.open(QIODevice::ReadOnly)) {
+        result.success = false;
+        result.error = "Aspose converter did not generate a PDF file";
+        if (!stderr_output.isEmpty()) {
+            result.error += ": " + stderr_output;
+        }
+        return result;
+    }
+    
+    result.success = true;
+    result.mimeType = "application/pdf";
+    result.data = pdfFile.readAll();
+    
+    if (!stderr_output.isEmpty()) {
+        qDebug() << "Aspose converter output:" << stderr_output;
+    }
+    
+    return result;
 }
 
 DocumentConverter::PreviewResult DocumentConverter::convertWordWithMicrosoftWord(const QString& filePath) {
@@ -561,6 +678,64 @@ QString DocumentConverter::findLibreOffice() {
         }
     }
 
+    return QString();
+}
+
+QString DocumentConverter::findPython() {
+    // 尝试在PATH中查找python
+    QString python = QStandardPaths::findExecutable("python");
+    if (!python.isEmpty()) {
+        return python;
+    }
+    
+    python = QStandardPaths::findExecutable("python3");
+    if (!python.isEmpty()) {
+        return python;
+    }
+    
+    // Windows常见Python安装位置
+#ifdef Q_OS_WIN
+    QStringList candidates = {
+        "C:/Python312/python.exe",
+        "C:/Python311/python.exe",
+        "C:/Python310/python.exe",
+        "C:/Python39/python.exe",
+        "C:/Python38/python.exe",
+        qEnvironmentVariable("LOCALAPPDATA") + "/Programs/Python/Python312/python.exe",
+        qEnvironmentVariable("LOCALAPPDATA") + "/Programs/Python/Python311/python.exe",
+        qEnvironmentVariable("LOCALAPPDATA") + "/Programs/Python/Python310/python.exe"
+    };
+    
+    for (const QString& candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+#endif
+    
+    return QString();
+}
+
+QString DocumentConverter::findAsposeLicense() {
+    // 尝试多个可能的许可证位置
+    QStringList candidates = {
+        QCoreApplication::applicationDirPath() + "/aspose.lic",
+        QCoreApplication::applicationDirPath() + "/1.lic",
+        QCoreApplication::applicationDirPath() + "/../Aspose.Words/python专用whl包/1.lic",
+        QDir::currentPath() + "/Aspose.Words/python专用whl包/1.lic",
+        QDir::currentPath() + "/aspose.lic",
+        QDir::currentPath() + "/1.lic"
+    };
+    
+    for (const QString& candidate : candidates) {
+        QString cleanPath = QDir::cleanPath(candidate);
+        if (QFileInfo::exists(cleanPath)) {
+            qDebug() << "Found Aspose license at:" << cleanPath;
+            return cleanPath;
+        }
+    }
+    
+    qDebug() << "No Aspose license found, will run in evaluation mode";
     return QString();
 }
 
