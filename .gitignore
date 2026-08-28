@@ -55,3 +55,8 @@ desktop.ini
 *.zip
 *.tar.gz
 *.rar
+
+# Aspose.Words library files (not to be committed)
+Aspose.Words/
+*.whl
+*.jar

@@ -35,28 +35,12 @@ private:
     static PreviewResult previewPdf(const QString& filePath);
     static PreviewResult previewWord(const QString& filePath);
     static PreviewResult convertWordWithAspose(const QString& filePath);
-    static PreviewResult convertWordWithLibreOffice(const QString& filePath);
-    static PreviewResult convertWordWithMicrosoftWord(const QString& filePath);
-    static QString findLibreOffice();
     static QString findPython();
     static QString findAsposeLicense();
     static QByteArray htmlEscape(const QString& text);
-    
-#ifdef Q_OS_WIN
-    static bool reinitializeWord();
-    static bool isWordHealthy();
-    static bool shouldReinitializeWord();
-#endif
 
     static QString getCachePath(const QString& filePath);
     static bool isCacheValid(const QString& cachePath, const QString& originalPath);
-
-#ifdef Q_OS_WIN
-    static QAxObject* wordApp;
-    static QMutex wordMutex;
-    static qint64 wordInitializedTime;  // Word实例创建时间（毫秒）
-    static const qint64 WORD_MAX_LIFETIME_MS = 3 * 60 * 60 * 1000;  // 3小时
-#endif
 };
 
 }
