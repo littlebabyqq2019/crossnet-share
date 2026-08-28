@@ -281,30 +281,41 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
             result.success = true;
             result.mimeType = "application/pdf";
             result.data = cacheFile.readAll();
+            qDebug() << "Word preview loaded from cache:" << filePath;
             return result;
         }
     }
 
+    qDebug() << "Converting Word document:" << filePath;
+
     // 优先尝试使用Aspose.Words（最稳定）
+    qDebug() << "Attempting conversion with Aspose.Words...";
     PreviewResult asposeResult = convertWordWithAspose(filePath);
     if (asposeResult.success) {
+        qDebug() << "✓ Successfully converted with Aspose.Words:" << filePath;
         QFile cacheFile(cachePath);
         if (cacheFile.open(QIODevice::WriteOnly)) {
             cacheFile.write(asposeResult.data);
             cacheFile.close();
         }
         return asposeResult;
+    } else {
+        qDebug() << "✗ Aspose.Words conversion failed:" << asposeResult.error;
     }
 
     // 备选方案1: Microsoft Word COM
+    qDebug() << "Attempting conversion with Microsoft Word COM...";
     PreviewResult wordResult = convertWordWithMicrosoftWord(filePath);
     if (wordResult.success) {
+        qDebug() << "✓ Successfully converted with Microsoft Word COM:" << filePath;
         QFile cacheFile(cachePath);
         if (cacheFile.open(QIODevice::WriteOnly)) {
             cacheFile.write(wordResult.data);
             cacheFile.close();
         }
         return wordResult;
+    } else {
+        qDebug() << "✗ Microsoft Word COM conversion failed:" << wordResult.error;
     }
 
     // 检查是否是损坏的Word文档
@@ -317,14 +328,17 @@ DocumentConverter::PreviewResult DocumentConverter::previewWord(const QString& f
     }
 
     // 备选方案2: LibreOffice
+    qDebug() << "Attempting conversion with LibreOffice...";
     PreviewResult libreOfficeResult = convertWordWithLibreOffice(filePath);
     if (libreOfficeResult.success) {
+        qDebug() << "✓ Successfully converted with LibreOffice:" << filePath;
         QFile cacheFile(cachePath);
         if (cacheFile.open(QIODevice::WriteOnly)) {
             cacheFile.write(libreOfficeResult.data);
             cacheFile.close();
         }
     } else {
+        qDebug() << "✗ LibreOffice conversion failed:" << libreOfficeResult.error;
         // 合并所有错误信息
         QStringList errors;
         if (!asposeResult.error.isEmpty()) {
