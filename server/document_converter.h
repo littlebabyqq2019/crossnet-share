@@ -36,7 +36,6 @@ private:
     static PreviewResult previewWord(const QString& filePath);
     static PreviewResult convertWordWithAspose(const QString& filePath);
     static QString findPython();
-    static QString findAsposeLicense();
     static QByteArray htmlEscape(const QString& text);
 
     static QString getCachePath(const QString& filePath);

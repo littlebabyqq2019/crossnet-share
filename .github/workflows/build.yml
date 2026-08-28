@@ -62,7 +62,6 @@ jobs:
         Copy-Item build/bin/Release/CrossNetShareServer.exe CrossNetShare-Release/Server/
         Copy-Item build/bin/Release/*.dll CrossNetShare-Release/Server/ -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/*.py CrossNetShare-Release/Server/ -ErrorAction SilentlyContinue
-        Copy-Item build/bin/Release/*.lic CrossNetShare-Release/Server/ -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/platforms CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/styles CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/plugins CrossNetShare-Release/Server/ -Recurse -ErrorAction SilentlyContinue

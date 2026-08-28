@@ -185,21 +185,11 @@ if(WIN32)
         COMMENT "Copying Qt image format plugins..."
     )
     
-    # 复制Aspose.Words Python转换脚本和许可证
+    # 复制Aspose.Words Python转换脚本
     add_custom_command(TARGET CrossNetShareServer POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/server/word_to_pdf.py"
             "$<TARGET_FILE_DIR:CrossNetShareServer>/word_to_pdf.py"
         COMMENT "Copying Aspose.Words Python converter script..."
     )
-    
-    # 如果许可证文件存在，复制它
-    if(EXISTS "${CMAKE_SOURCE_DIR}/Aspose.Words/python专用whl包/1.lic")
-        add_custom_command(TARGET CrossNetShareServer POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_SOURCE_DIR}/Aspose.Words/python专用whl包/1.lic"
-                "$<TARGET_FILE_DIR:CrossNetShareServer>/1.lic"
-            COMMENT "Copying Aspose.Words license..."
-        )
-    endif()
 endif()
