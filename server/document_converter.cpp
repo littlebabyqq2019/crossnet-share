@@ -347,85 +347,32 @@ void DocumentConverter::cleanupCache() {
 }
 
 QString DocumentConverter::convertWordToJpg(const QString& filePath, const QString& outputDir) {
-#ifdef Q_OS_WIN
-    QMutexLocker locker(&wordMutex);
-
-    if (!wordApp || wordApp->isNull()) {
-        qDebug() << "Microsoft Word not available for conversion";
-        return QString();
-    }
-
-    // 检查是否需要预防性重启
-    if (shouldReinitializeWord()) {
-        qDebug() << "Proactively reinitializing Word in convertWordToJpg due to long runtime";
-        if (!reinitializeWord()) {
-            qDebug() << "Failed to reinitialize Word in convertWordToJpg";
-            return QString();
-        }
-    }
-
-    // 检查Word健康状态，如果不健康则重新初始化
-    if (!isWordHealthy()) {
-        qDebug() << "Word is unhealthy in convertWordToJpg, reinitializing...";
-        if (!reinitializeWord()) {
-            qDebug() << "Failed to reinitialize Word in convertWordToJpg";
-            return QString();
-        }
-    }
-
+    // 使用Aspose.Words将Word转换为PDF，然后由调用者转换为JPG
+    // 这个函数主要用于水印服务
+    
     QDir().mkpath(outputDir);
-
-    QString nativeInputPath = QDir::toNativeSeparators(QFileInfo(filePath).absoluteFilePath());
+    
     QString baseName = QFileInfo(filePath).completeBaseName();
-    QString outputPath = outputDir + "/" + baseName + ".png";
-    QString nativeOutputPath = QDir::toNativeSeparators(outputPath);
-
-    QAxObject* documents = wordApp->querySubObject("Documents");
-    if (!documents) {
-        qDebug() << "Failed to access Word Documents";
-        
-        // 尝试重新初始化
-        if (reinitializeWord()) {
-            documents = wordApp->querySubObject("Documents");
-            if (!documents) {
-                qDebug() << "Failed to access Word Documents after reinitialization";
-                return QString();
-            }
-        } else {
-            return QString();
-        }
-    }
-
-    QAxObject* document = documents->querySubObject("Open(const QString&, bool, bool, bool)",
-        nativeInputPath, false, true, false);
-
-    if (!document) {
-        qDebug() << "Failed to open document in Word";
-        delete documents;
-        return QString();
-    }
-
-    // 导出高质量 PDF
     QString tempPdfPath = outputDir + "/" + baseName + "_temp.pdf";
-    QString nativeTempPdfPath = QDir::toNativeSeparators(tempPdfPath);
-
-    document->dynamicCall("ExportAsFixedFormat(const QString&, int)",
-        nativeTempPdfPath, 17);
-
-    document->dynamicCall("Close(bool)", false);
-    delete documents;
-
-    if (!QFile::exists(tempPdfPath)) {
-        qDebug() << "Failed to generate PDF";
+    
+    // 使用Aspose转换为PDF
+    PreviewResult result = convertWordWithAspose(filePath);
+    if (!result.success) {
+        qDebug() << "Failed to convert Word to PDF for watermarking:" << result.error;
         return QString();
     }
-
+    
+    // 保存PDF到临时文件
+    QFile pdfFile(tempPdfPath);
+    if (!pdfFile.open(QIODevice::WriteOnly)) {
+        qDebug() << "Failed to save temp PDF file";
+        return QString();
+    }
+    
+    pdfFile.write(result.data);
+    pdfFile.close();
+    
     return tempPdfPath;
-#else
-    Q_UNUSED(filePath);
-    Q_UNUSED(outputDir);
-    return QString();
-#endif
 }
 
 }
