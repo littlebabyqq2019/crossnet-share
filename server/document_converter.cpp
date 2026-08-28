@@ -277,19 +277,22 @@ QString DocumentConverter::findPython() {
 }
 
 QString DocumentConverter::findAsposeLicense() {
+    // 获取脚本目录（word_to_pdf.py所在目录）
+    QString scriptDir = QCoreApplication::applicationDirPath();
+    
     // 尝试多个可能的许可证位置
     QStringList candidates = {
-        // 推荐的许可证文件名
-        QCoreApplication::applicationDirPath() + "/aspose.words.lic",
-        QCoreApplication::applicationDirPath() + "/1.lic",
-        QCoreApplication::applicationDirPath() + "/aspose.lic",
+        // 与可执行文件同目录（优先）
+        scriptDir + "/1.lic",
+        scriptDir + "/aspose.words.lic",
+        scriptDir + "/aspose.lic",
         // 开发环境路径
-        QCoreApplication::applicationDirPath() + "/../Aspose.Words/python专用whl包/aspose.words.lic",
-        QCoreApplication::applicationDirPath() + "/../Aspose.Words/python专用whl包/1.lic",
-        QDir::currentPath() + "/Aspose.Words/python专用whl包/aspose.words.lic",
+        scriptDir + "/../Aspose.Words/python专用whl包/1.lic",
+        scriptDir + "/../Aspose.Words/python专用whl包/aspose.words.lic",
         QDir::currentPath() + "/Aspose.Words/python专用whl包/1.lic",
-        QDir::currentPath() + "/aspose.words.lic",
+        QDir::currentPath() + "/Aspose.Words/python专用whl包/aspose.words.lic",
         QDir::currentPath() + "/1.lic",
+        QDir::currentPath() + "/aspose.words.lic",
         QDir::currentPath() + "/aspose.lic"
     };
     
@@ -301,7 +304,11 @@ QString DocumentConverter::findAsposeLicense() {
         }
     }
     
-    qDebug() << "No Aspose license found, will run in evaluation mode";
+    qDebug() << "No Aspose license found in the following locations:";
+    for (const QString& candidate : candidates) {
+        qDebug() << "  -" << QDir::cleanPath(candidate);
+    }
+    qDebug() << "Will run in evaluation mode";
     return QString();
 }
 
