@@ -78,6 +78,7 @@ private:
     void handleFilePreview(QTcpSocket* socket, const HttpRequest& request);
     void handleWatermarkGenerate(QTcpSocket* socket, const HttpRequest& request);
     void handleWatermarkDownload(QTcpSocket* socket, const HttpRequest& request);
+    void handleContentSearch(QTcpSocket* socket, const HttpRequest& request);
 
     // Static file serving
     void serveStaticFile(QTcpSocket* socket, const QString& path);

@@ -2,6 +2,7 @@
 
 #include "../client.h"
 #include "../file_manager.h"
+#include "../file_indexer.h"
 #include <QMainWindow>
 #include <QLineEdit>
 #include <QSpinBox>
@@ -17,6 +18,8 @@
 #include <QMenu>
 
 namespace CrossNetShare {
+
+class IndexSettingsDialog;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -62,16 +65,25 @@ private slots:
     void onTrayIconActivated(QSystemTrayIcon::ActivationReason reason);
     void onShowWindow();
     void onQuitApp();
+    
+    // 索引相关
+    void onIndexSettingsClicked();
+    void onSearchTextChanged(const QString& text);
+    void onContentSearchClicked();
 
 private:
     void setupUi();
+    void setupMenuBar();
     void setupTrayIcon();
+    void initializeIndexer();
     void updateConnectionStatus();
     void appendLog(const QString& message);
     void updateFileTree(const std::vector<FileMetadata>& files);
+    void performContentSearch(const QString& query);
 
     Client* client_;
     FileManager* fileManager_;
+    FileIndexer* indexer_;
 
     // UI控件 - 连接区域
     QLineEdit* serverAddressEdit_;
@@ -92,6 +104,11 @@ private:
     QDateEdit* endDateEdit_;
     QPushButton* refreshButton_;
     QTreeWidget* fileTreeWidget_;
+    
+    // UI控件 - 搜索区域
+    QLineEdit* searchEdit_;
+    QPushButton* searchButton_;
+    QLabel* searchResultLabel_;
 
     // UI控件 - 下载区域
     QLineEdit* savePathEdit_;
@@ -110,6 +127,9 @@ private:
     // 系统托盘
     QSystemTrayIcon* trayIcon_;
     QMenu* trayMenu_;
+    
+    // 菜单
+    QAction* indexSettingsAction_;
 };
 
 }

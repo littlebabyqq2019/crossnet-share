@@ -32,6 +32,10 @@ enum class MessageType {
     // 批量下载
     BATCH_DOWNLOAD_REQUEST,
     BATCH_DOWNLOAD_RESPONSE,
+    
+    // 内容搜索
+    CONTENT_SEARCH_REQUEST,
+    CONTENT_SEARCH_RESPONSE,
 
     // 心跳和状态
     HEARTBEAT,
@@ -66,6 +70,24 @@ struct TransferProgress {
     int totalFiles;
 
     TransferProgress() : bytesTransferred(0), totalBytes(0), fileIndex(0), totalFiles(0) {}
+};
+
+struct ContentSearchRequest {
+    std::string query;                  // 搜索关键词
+    std::vector<std::string> fileTypes; // 文件类型过滤（可选）
+    std::string targetClient;           // 目标客户端（空表示当前）
+    
+    ContentSearchRequest() {}
+};
+
+struct ContentSearchResult {
+    std::string filename;
+    std::string relativePath;
+    std::string ownerClient;
+    uint64_t size;
+    time_t modifyTime;
+    
+    ContentSearchResult() : size(0), modifyTime(0) {}
 };
 
 }

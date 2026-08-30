@@ -262,6 +262,8 @@ void WebServer::handleRequest(QTcpSocket* socket, const HttpRequest& request) {
         handleFileList(socket, request);
     } else if (request.path == "/api/search") {
         handleFileSearch(socket, request);
+    } else if (request.path == "/api/content-search") {
+        handleContentSearch(socket, request);
     } else if (request.path == "/api/download") {
         handleFileDownload(socket, request);
     } else if (request.path == "/api/batch-download") {
@@ -1295,4 +1297,70 @@ void WebServer::processWatermarkGeneration(QTcpSocket* socket, const QString& te
         .arg(username, filePath, QString::number(watermarkResult.generatedFiles.size())));
 }
 
+}
+
+
+void WebServer::handleContentSearch(QTcpSocket* socket, const HttpRequest& request) {
+    // 检查认证
+    QString username;
+    if (!isAuthenticated(request, username)) {
+        HttpResponse response;
+        response.statusCode = 401;
+        response.statusText = "Unauthorized";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = jsonResponse({{"success", false}, {"error", "Unauthorized"}});
+        sendResponse(socket, response);
+        return;
+    }
+    
+    // 解析请求参数
+    nlohmann::json requestData;
+    try {
+        if (!request.body.isEmpty()) {
+            requestData = nlohmann::json::parse(request.body.constData(), 
+                                               request.body.constData() + request.body.size());
+        }
+    } catch (const std::exception& e) {
+        HttpResponse response;
+        response.statusCode = 400;
+        response.statusText = "Bad Request";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = jsonResponse({{"success", false}, {"error", "Invalid JSON"}});
+        sendResponse(socket, response);
+        return;
+    }
+    
+    std::string query = requestData.value("query", "");
+    
+    if (query.empty()) {
+        HttpResponse response;
+        response.statusCode = 400;
+        response.statusText = "Bad Request";
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        response.body = jsonResponse({{"success", false}, {"error", "Query parameter is required"}});
+        sendResponse(socket, response);
+        return;
+    }
+    
+    // 返回友好提示（简化实现）
+    nlohmann::json responseData;
+    responseData["success"] = false;
+    responseData["query"] = query;
+    responseData["message"] = "内容搜索功能仅在桌面客户端可用。请下载并使用 CrossNetShare 客户端来搜索文件内容。";
+    responseData["feature_available"] = "client_only";
+    responseData["results"] = nlohmann::json::array();
+    responseData["help"] = "Content search is only available in the desktop client application. "
+                          "The client provides full-text search with FTS5 indexing for TXT, PDF, and Word documents.";
+    
+    HttpResponse response;
+    response.statusCode = 200;
+    response.statusText = "OK";
+    response.headers["Content-Type"] = "application/json; charset=utf-8";
+    response.headers["Access-Control-Allow-Origin"] = "*";
+    response.body = jsonResponse(responseData);
+    
+    sendResponse(socket, response);
+    
+    emit logMessage(QString("[HTTP] Content search request (client-only feature): %1")
+        .arg(QString::fromStdString(query)));
 }

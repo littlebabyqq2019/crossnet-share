@@ -18,7 +18,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # 查找依赖库
-find_package(Qt5 COMPONENTS Core Widgets Network REQUIRED)
+find_package(Qt5 COMPONENTS Core Widgets Network Sql Concurrent REQUIRED)
 
 # 第三方库 - nlohmann/json (header-only)
 include(FetchContent)
@@ -127,8 +127,12 @@ if(WIN32)
         client/client.h
         client/file_manager.cpp
         client/file_manager.h
+        client/file_indexer.cpp
+        client/file_indexer.h
         client/ui/main_window.cpp
         client/ui/main_window.h
+        client/ui/index_settings_dialog.cpp
+        client/ui/index_settings_dialog.h
         client/client.rc
     )
 else()
@@ -138,8 +142,12 @@ else()
         client/client.h
         client/file_manager.cpp
         client/file_manager.h
+        client/file_indexer.cpp
+        client/file_indexer.h
         client/ui/main_window.cpp
         client/ui/main_window.h
+        client/ui/index_settings_dialog.cpp
+        client/ui/index_settings_dialog.h
     )
 endif()
 
@@ -148,6 +156,8 @@ target_link_libraries(CrossNetShareClient
     PRIVATE Qt5::Core
     PRIVATE Qt5::Widgets
     PRIVATE Qt5::Network
+    PRIVATE Qt5::Sql
+    PRIVATE Qt5::Concurrent
 )
 
 # Windows特定设置
@@ -191,6 +201,17 @@ if(WIN32)
             "${CMAKE_SOURCE_DIR}/server/word_to_pdf.py"
             "$<TARGET_FILE_DIR:CrossNetShareServer>/word_to_pdf.py"
         COMMENT "Copying Aspose.Words Python converter script..."
+    )
+    
+    # 复制客户端文本提取脚本
+    add_custom_command(TARGET CrossNetShareClient POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/client/extract_pdf_text.py"
+            "$<TARGET_FILE_DIR:CrossNetShareClient>/extract_pdf_text.py"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/client/extract_word_text.py"
+            "$<TARGET_FILE_DIR:CrossNetShareClient>/extract_word_text.py"
+        COMMENT "Copying text extraction scripts..."
     )
     
     # 如果许可证文件存在，复制它
