@@ -601,6 +601,27 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
         emit logMessage(QString("  - file_id: %1").arg(testQuery.value(0).toString()));
     }
     
+    // 测试：尝试搜索任意内容（使用 * 通配符）
+    testQuery.prepare("SELECT file_id FROM files_fts WHERE files_fts MATCH ? LIMIT 3");
+    testQuery.addBindValue("*");  // 搜索所有
+    if (testQuery.exec()) {
+        int matchCount = 0;
+        while (testQuery.next()) {
+            matchCount++;
+        }
+        emit logMessage(QString("[FileIndexer] Test MATCH '*' found %1 records").arg(matchCount));
+    }
+    
+    // 测试：搜索文件名中的内容
+    testQuery.prepare("SELECT file_id, file_name FROM files_fts WHERE file_name MATCH ? LIMIT 3");
+    testQuery.addBindValue("txt");
+    if (testQuery.exec()) {
+        emit logMessage("[FileIndexer] Test searching 'txt' in file_name:");
+        while (testQuery.next()) {
+            emit logMessage(QString("  - Found: %1").arg(testQuery.value(1).toString()));
+        }
+    }
+    
     QSqlQuery sqlQuery(db_);
     
     // FTS5 表使用 rowid，不能用 file_id JOIN
@@ -648,18 +669,39 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
 QString FileIndexer::buildFTS5Query(const QString& userQuery) const {
     QString query = userQuery.trimmed();
     
-    // 简单的查询转换
-    // AND -> 空格（FTS5默认是AND）
-    query.replace(" AND ", " ", Qt::CaseInsensitive);
-    query.replace(" and ", " ");
+    // 检测是否包含中文字符
+    bool hasChinese = false;
+    for (const QChar& ch : query) {
+        if (ch.unicode() >= 0x4E00 && ch.unicode() <= 0x9FFF) {
+            hasChinese = true;
+            break;
+        }
+    }
     
-    // OR 保持原样（FTS5支持）
-    query.replace(" or ", " OR ");
-    
-    // NOT -> NOT（FTS5支持）
-    query.replace(" not ", " NOT ");
-    
-    return query;
+    if (hasChinese) {
+        // 中文处理：将每个字符用 AND 连接
+        // 例如："雁塔" -> "雁 AND 塔"
+        QStringList chars;
+        for (const QChar& ch : query) {
+            if (!ch.isSpace()) {
+                chars << QString(ch);
+            }
+        }
+        return chars.join(" AND ");
+    } else {
+        // 英文处理：简单的查询转换
+        // AND -> 空格（FTS5默认是AND）
+        query.replace(" AND ", " ", Qt::CaseInsensitive);
+        query.replace(" and ", " ");
+        
+        // OR 保持原样（FTS5支持）
+        query.replace(" or ", " OR ");
+        
+        // NOT -> NOT（FTS5支持）
+        query.replace(" not ", " NOT ");
+        
+        return query;
+    }
 }
 
 IndexStats FileIndexer::getStats() {
