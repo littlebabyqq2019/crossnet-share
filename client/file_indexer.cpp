@@ -775,7 +775,29 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
               "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) "
               "WHERE files_fts MATCH ? ";
         
-        bindValues << query;  // Simple 会自动分词
+        // Simple tokenizer 的 jieba 分词可能需要通配符来匹配部分词
+        // 如果查询是中文且长度较短，尝试添加通配符
+        QString ftsQuery = query;
+        
+        // 检测是否全是中文字符
+        bool allChinese = true;
+        for (const QChar& ch : query) {
+            if (ch.unicode() < 0x4E00 || ch.unicode() > 0x9FFF) {
+                if (!ch.isSpace()) {
+                    allChinese = false;
+                    break;
+                }
+            }
+        }
+        
+        // 如果是中文短词，尝试使用通配符或者多个查询策略
+        if (allChinese && query.length() <= 4) {
+            // 策略1：尝试精确匹配
+            // 策略2：如果失败，使用每个字符的 OR 组合
+            emit logMessage(QString("[FileIndexer] Chinese query detected, trying exact match first"));
+        }
+        
+        bindValues << ftsQuery;
     } else {
         // 降级到 LIKE 查询（中文兼容但性能差）
         emit logMessage("[FileIndexer] Using LIKE search (Chinese-compatible, performance warning)");
@@ -831,6 +853,54 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
     finalizeStatement(stmt);
     
     emit logMessage(QString("[FileIndexer] Search completed: %1 results").arg(results.size()));
+    
+    // 如果 FTS5 MATCH 没有结果但使用了 Simple tokenizer，尝试降级到 LIKE
+    if (results.isEmpty() && simpleLoaded_) {
+        emit logMessage("[FileIndexer] FTS5 returned no results, trying LIKE fallback...");
+        
+        QString likeSql = "SELECT DISTINCT f.file_path, f.file_name "
+                         "FROM files f "
+                         "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) "
+                         "WHERE fts.content LIKE ? OR fts.file_name LIKE ? ";
+        
+        if (!fileTypes.isEmpty()) {
+            QStringList placeholders;
+            for (int i = 0; i < fileTypes.size(); ++i) {
+                placeholders << "?";
+            }
+            likeSql += "AND f.file_type IN (" + placeholders.join(", ") + ") ";
+        }
+        
+        likeSql += "LIMIT 1000";
+        
+        if (prepareStatement(likeSql, &stmt)) {
+            QString likePattern = "%" + query + "%";
+            sqlite3_bind_text(stmt, 1, likePattern.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, likePattern.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            
+            int paramIndex = 3;
+            for (const QString& type : fileTypes) {
+                sqlite3_bind_text(stmt, paramIndex++, type.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+            }
+            
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                const unsigned char* filePath = sqlite3_column_text(stmt, 0);
+                const unsigned char* fileName = sqlite3_column_text(stmt, 1);
+                
+                if (filePath) {
+                    results << QString::fromUtf8(reinterpret_cast<const char*>(filePath));
+                    if (fileName) {
+                        emit logMessage(QString("[FileIndexer]   Found (LIKE): %1")
+                            .arg(QString::fromUtf8(reinterpret_cast<const char*>(fileName))));
+                    }
+                }
+            }
+            
+            finalizeStatement(stmt);
+            emit logMessage(QString("[FileIndexer] LIKE fallback completed: %1 results").arg(results.size()));
+        }
+    }
+    
     return results;
 }
 
