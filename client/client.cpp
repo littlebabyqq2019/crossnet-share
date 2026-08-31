@@ -1,4 +1,5 @@
 #include "client.h"
+#include "file_indexer.h"
 #include "common/protocol.h"
 #include "common/file_utils.h"
 #include <QDataStream>
@@ -18,6 +19,7 @@ Client::Client(QObject* parent)
     , reconnectAttempts_(0)
     , fileWatcher_(new QFileSystemWatcher(this))
     , refreshTimer_(new QTimer(this))
+    , fileIndexer_(nullptr)
 {
     connect(socket_, &QTcpSocket::connected, this, &Client::onConnected);
     connect(socket_, &QTcpSocket::disconnected, this, &Client::onDisconnected);
@@ -300,6 +302,10 @@ void Client::handleMessage(MessageType type, const nlohmann::json& payload) {
 
     case MessageType::REFRESH_INDEX_REQUEST:
         handleRefreshIndexRequest(payload);
+        break;
+    
+    case MessageType::CONTENT_SEARCH_REQUEST:
+        handleContentSearchRequest(payload);
         break;
 
     case MessageType::DOWNLOAD_REQUEST:
@@ -634,6 +640,66 @@ void Client::onRefreshTimerTimeout() {
 
     sendMessage(MessageType::REGISTER_CLIENT, payload);
     emit logMessage("File list updated: " + QString::number(files.size()) + " files");
+}
+
+void Client::handleContentSearchRequest(const nlohmann::json& payload) {
+    try {
+        QString searchId = QString::fromStdString(payload["searchId"].get<std::string>());
+        QString query = QString::fromStdString(payload["query"].get<std::string>());
+        
+        emit logMessage(QString("[Client] Received content search request: '%1' (ID: %2)").arg(query).arg(searchId));
+        
+        // 执行本地搜索
+        QStringList filePaths = performContentSearch(query);
+        
+        // 准备响应
+        nlohmann::json response;
+        response["searchId"] = searchId.toStdString();
+        response["results"] = nlohmann::json::array();
+        
+        for (const QString& filePath : filePaths) {
+            QFileInfo fileInfo(filePath);
+            if (fileInfo.exists()) {
+                nlohmann::json result;
+                result["filename"] = fileInfo.fileName().toStdString();
+                result["relativePath"] = QDir(sharePath_).relativeFilePath(filePath).toStdString();
+                result["size"] = fileInfo.size();
+                result["modifyTime"] = fileInfo.lastModified().toSecsSinceEpoch();
+                
+                response["results"].push_back(result);
+            }
+        }
+        
+        emit logMessage(QString("[Client] Sending %1 search results for '%2'").arg(filePaths.size()).arg(query));
+        
+        sendMessage(MessageType::CONTENT_SEARCH_RESPONSE, response);
+        
+    } catch (const std::exception& e) {
+        emit logMessage(QString("[Client] Content search failed: %1").arg(e.what()));
+        
+        // 发送空结果
+        nlohmann::json response;
+        if (payload.contains("searchId")) {
+            response["searchId"] = payload["searchId"];
+        }
+        response["results"] = nlohmann::json::array();
+        sendMessage(MessageType::CONTENT_SEARCH_RESPONSE, response);
+    }
+}
+
+QStringList Client::performContentSearch(const QString& query) {
+    if (!fileIndexer_) {
+        emit logMessage("[Client] FileIndexer not set, cannot perform content search");
+        return QStringList();
+    }
+    
+    // 调用 FileIndexer 进行搜索
+    return fileIndexer_->search(query);
+}
+
+void Client::setFileIndexer(FileIndexer* indexer) {
+    fileIndexer_ = indexer;
+    emit logMessage("[Client] FileIndexer linked for content search");
 }
 
 }

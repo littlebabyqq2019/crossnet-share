@@ -56,6 +56,7 @@ signals:
     void disconnected(const QString& clientId);
     void logMessage(const QString& message);
     void clientRegistered(const QString& clientId, const QString& sharePath);
+    void contentSearchResponse(const QString& searchId, const QString& clientId, const QList<ContentSearchResult>& results);
 
 private slots:
     void onReadyRead();
@@ -70,6 +71,7 @@ private:
     void handleDownloadRequest(const nlohmann::json& payload);
     void handleUploadRequest(const nlohmann::json& payload);
     void handleBatchDownloadRequest(const nlohmann::json& payload);
+    void handleContentSearchResponse(const nlohmann::json& payload);
 
     void sendMessage(MessageType type, const nlohmann::json& payload);
     void sendError(const QString& errorMsg);

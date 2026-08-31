@@ -11,6 +11,8 @@
 
 namespace CrossNetShare {
 
+class FileIndexer;  // 前向声明
+
 class Client : public QObject {
     Q_OBJECT
 
@@ -54,6 +56,9 @@ public:
 
     // 上传文件
     void uploadFile(const QString& localPath, const QString& relativePath);
+    
+    // 设置内容索引器（用于搜索）
+    void setFileIndexer(FileIndexer* indexer);
 
 signals:
     void connected();
@@ -83,6 +88,7 @@ private:
     void handleFileListResponse(const nlohmann::json& payload);
     void handleFilteredFilesResponse(const nlohmann::json& payload);
     void handleRefreshIndexRequest(const nlohmann::json& payload);
+    void handleContentSearchRequest(const nlohmann::json& payload);
     void handleDownloadRequest(const nlohmann::json& payload);
     void handleDownloadResponse(const nlohmann::json& payload);
     void handleFileData(const nlohmann::json& payload);
@@ -92,10 +98,14 @@ private:
     void handleErrorMessage(const nlohmann::json& payload);
 
     void sendMessage(MessageType type, const nlohmann::json& payload);
+    QStringList performContentSearch(const QString& query);
 
     QTcpSocket* socket_;
     bool connected_;
     QByteArray receiveBuffer_;
+    
+    // 内容索引器（用于本地搜索）
+    FileIndexer* fileIndexer_;
 
     // 自动重连
     QTimer* reconnectTimer_;

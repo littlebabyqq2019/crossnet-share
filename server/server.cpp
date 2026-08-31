@@ -2,8 +2,12 @@
 #include "web_server.h"
 #include "auth_manager.h"
 #include "audit_logger.h"
+#include "common/protocol.h"
 #include <QCoreApplication>
 #include <QNetworkInterface>
+#include <QUuid>
+#include <QMutex>
+#include <QMutexLocker>
 
 namespace CrossNetShare {
 
@@ -174,6 +178,7 @@ void Server::onNewConnection() {
         connect(handler, &ClientHandler::disconnected, this, &Server::onClientDisconnected);
         connect(handler, &ClientHandler::logMessage, this, &Server::onClientLog);
         connect(handler, &ClientHandler::clientRegistered, this, &Server::onClientRegistered);
+        connect(handler, &ClientHandler::contentSearchResponse, this, &Server::onContentSearchResponse);
 
         emit logMessage("New connection from " + handler->getClientAddress());
     }
@@ -224,6 +229,92 @@ void Server::requestAllClientsRefresh() {
         }
     }
     emit logMessage("Sent refresh request to " + QString::number(count) + " connected clients");
+}
+
+QString Server::broadcastContentSearch(const QString& query) {
+    QMutexLocker locker(&searchCacheMutex_);
+    
+    // 生成搜索ID
+    QString searchId = QUuid::createUuid().toString();
+    
+    // 初始化搜索缓存
+    SearchCache cache;
+    cache.query = query;
+    cache.timestamp = QDateTime::currentDateTime();
+    cache.expectedClients = 0;
+    cache.receivedClients = 0;
+    
+    // 广播搜索请求到所有在线客户端
+    nlohmann::json payload;
+    payload["searchId"] = searchId.toStdString();
+    payload["query"] = query.toStdString();
+    
+    QByteArray message = Protocol::serializeMessage(
+        MessageType::CONTENT_SEARCH_REQUEST,
+        payload
+    );
+    
+    for (ClientHandler* handler : clients_) {
+        if (handler && handler->isConnected()) {
+            handler->socket()->write(message);
+            handler->socket()->flush();
+            cache.expectedClients++;
+        }
+    }
+    
+    searchCache_[searchId] = cache;
+    
+    emit logMessage(QString("[Server] Broadcasted content search '%1' to %2 clients (ID: %3)")
+        .arg(query).arg(cache.expectedClients).arg(searchId));
+    
+    return searchId;
+}
+
+QList<ContentSearchResult> Server::getContentSearchResults(const QString& searchId) {
+    QMutexLocker locker(&searchCacheMutex_);
+    
+    QList<ContentSearchResult> allResults;
+    
+    if (!searchCache_.contains(searchId)) {
+        return allResults;
+    }
+    
+    const SearchCache& cache = searchCache_[searchId];
+    
+    // 聚合所有客户端的结果
+    for (auto it = cache.clientResults.constBegin(); it != cache.clientResults.constEnd(); ++it) {
+        allResults.append(it.value());
+    }
+    
+    return allResults;
+}
+
+void Server::clearContentSearchResults(const QString& searchId) {
+    QMutexLocker locker(&searchCacheMutex_);
+    searchCache_.remove(searchId);
+}
+
+void Server::onContentSearchResponse(const QString& searchId, const QString& clientId, 
+                                     const QList<ContentSearchResult>& results) {
+    QMutexLocker locker(&searchCacheMutex_);
+    
+    if (!searchCache_.contains(searchId)) {
+        emit logMessage(QString("[Server] Received search response for unknown searchId: %1").arg(searchId));
+        return;
+    }
+    
+    SearchCache& cache = searchCache_[searchId];
+    cache.clientResults[clientId] = results;
+    cache.receivedClients++;
+    
+    emit logMessage(QString("[Server] Received %1 results from client %2 for search '%3' (%4/%5)")
+        .arg(results.size())
+        .arg(clientId)
+        .arg(cache.query)
+        .arg(cache.receivedClients)
+        .arg(cache.expectedClients));
+    
+    emit contentSearchResultReceived(searchId, clientId);
 }
 
 }

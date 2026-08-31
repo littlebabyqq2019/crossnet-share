@@ -753,6 +753,12 @@ void MainWindow::initializeIndexer() {
     indexer_->start();
     onLogMessage("Content indexer initialized and started");
     
+    // 链接 FileIndexer 到 Client（用于 Web 搜索）
+    if (client_) {
+        client_->setFileIndexer(indexer_);
+        onLogMessage("[MainWindow] FileIndexer linked to Client for content search");
+    }
+    
     // 触发首次索引（在后台线程，延迟2秒避免启动时卡顿）
     QTimer::singleShot(2000, [this]() {
         if (indexer_) {

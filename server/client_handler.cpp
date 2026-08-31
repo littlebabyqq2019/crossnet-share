@@ -253,6 +253,10 @@ void ClientHandler::handleMessage(MessageType type, const nlohmann::json& payloa
         // 回应心跳
         sendMessage(MessageType::HEARTBEAT, {});
         break;
+    
+    case MessageType::CONTENT_SEARCH_RESPONSE:
+        handleContentSearchResponse(payload);
+        break;
 
     default:
         sendError("Unknown message type");
@@ -630,6 +634,36 @@ void ClientHandler::requestRefresh() {
     nlohmann::json payload;
     payload["message"] = "Server requested index refresh";
     sendMessage(MessageType::REFRESH_INDEX_REQUEST, payload);
+}
+
+void ClientHandler::handleContentSearchResponse(const nlohmann::json& payload) {
+    try {
+        QString searchId = QString::fromStdString(payload["searchId"].get<std::string>());
+        
+        QList<ContentSearchResult> results;
+        
+        if (payload.contains("results") && payload["results"].is_array()) {
+            for (const auto& item : payload["results"]) {
+                ContentSearchResult result;
+                result.filename = item["filename"].get<std::string>();
+                result.relativePath = item["relativePath"].get<std::string>();
+                result.ownerClient = clientId_.toStdString();
+                result.size = item.value("size", 0);
+                result.modifyTime = item.value("modifyTime", 0);
+                
+                results.append(result);
+            }
+        }
+        
+        emit logMessage(QString("[ClientHandler] Received %1 search results from client %2 for searchId %3")
+            .arg(results.size()).arg(clientId_).arg(searchId));
+        
+        // 通知 Server
+        emit contentSearchResponse(searchId, clientId_, results);
+        
+    } catch (const std::exception& e) {
+        emit logMessage(QString("[ClientHandler] Failed to handle search response: %1").arg(e.what()));
+    }
 }
 
 }

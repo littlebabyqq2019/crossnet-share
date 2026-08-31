@@ -53,6 +53,11 @@ public:
 
     // 请求所有在线客户端刷新文件列表
     void requestAllClientsRefresh();
+    
+    // 内容搜索：广播到所有客户端
+    QString broadcastContentSearch(const QString& query);
+    QList<ContentSearchResult> getContentSearchResults(const QString& searchId);
+    void clearContentSearchResults(const QString& searchId);
 
 signals:
     void started();
@@ -61,6 +66,7 @@ signals:
     void clientDisconnected(const QString& clientId);
     void logMessage(const QString& message);
     void error(const QString& errorMsg);
+    void contentSearchResultReceived(const QString& searchId, const QString& clientId);
 
 private slots:
     void onNewConnection();
@@ -69,6 +75,7 @@ private slots:
     void onClientRegistered(const QString& clientId, const QString& sharePath);
     void onFileWatcherLog(const QString& message);
     void onDirectoryChanged(const QString& clientId, const QString& path);
+    void onContentSearchResponse(const QString& searchId, const QString& clientId, const QList<ContentSearchResult>& results);
 
 private:
     ServerConfig config_;
@@ -79,6 +86,17 @@ private:
     FileWatcher* fileWatcher_;
     WebServer* webServer_;
     AuthManager* authManager_;
+    
+    // 内容搜索结果缓存
+    struct SearchCache {
+        QString query;
+        QMap<QString, QList<ContentSearchResult>> clientResults;
+        QDateTime timestamp;
+        int expectedClients;
+        int receivedClients;
+    };
+    QMap<QString, SearchCache> searchCache_; // searchId -> SearchCache
+    QMutex searchCacheMutex_;
 };
 
 }

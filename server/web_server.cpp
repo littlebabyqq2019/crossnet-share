@@ -18,6 +18,8 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTextStream>
+#include <QEventLoop>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QUrlQuery>
@@ -1339,15 +1341,47 @@ void WebServer::handleContentSearch(QTcpSocket* socket, const HttpRequest& reque
         return;
     }
     
-    // 返回友好提示（简化实现）
+    // 广播搜索请求到所有客户端
+    QString searchId = server_->broadcastContentSearch(QString::fromStdString(query));
+    
+    // 等待结果（最多3秒）
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    
+    connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    connect(server_, &Server::contentSearchResultReceived, &loop, [&](const QString& sid, const QString&) {
+        if (sid == searchId) {
+            // 可以在这里检查是否所有客户端都响应了
+            // 为简单起见，我们继续等待直到超时
+        }
+    });
+    
+    timeout.start(3000);  // 3秒超时
+    loop.exec();
+    
+    // 获取聚合结果
+    QList<ContentSearchResult> results = server_->getContentSearchResults(searchId);
+    
+    // 构建响应
     nlohmann::json responseData;
-    responseData["success"] = false;
+    responseData["success"] = true;
     responseData["query"] = query;
-    responseData["message"] = "内容搜索功能仅在桌面客户端可用。请下载并使用 CrossNetShare 客户端来搜索文件内容。";
-    responseData["feature_available"] = "client_only";
+    responseData["totalResults"] = results.size();
     responseData["results"] = nlohmann::json::array();
-    responseData["help"] = "Content search is only available in the desktop client application. "
-                          "The client provides full-text search with FTS5 indexing for TXT, PDF, and Word documents.";
+    
+    for (const auto& result : results) {
+        nlohmann::json item;
+        item["filename"] = result.filename;
+        item["relativePath"] = result.relativePath;
+        item["ownerClient"] = result.ownerClient;
+        item["size"] = result.size;
+        item["modifyTime"] = result.modifyTime;
+        responseData["results"].push_back(item);
+    }
+    
+    // 清理缓存
+    server_->clearContentSearchResults(searchId);
     
     HttpResponse response;
     response.statusCode = 200;
