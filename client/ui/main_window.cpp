@@ -32,7 +32,6 @@ MainWindow::MainWindow(QWidget* parent)
     setupUi();
     setupMenuBar();
     setupTrayIcon();
-    initializeIndexer();
 
     // 连接信号
     connect(client_, &Client::connected, this, &MainWindow::onClientConnected);
@@ -87,6 +86,11 @@ MainWindow::MainWindow(QWidget* parent)
             }
         } else {
             onLogMessage("Auto-connect skipped: missing required configuration");
+        }
+        
+        // 如果共享路径已设置，初始化索引器
+        if (!sharePath.isEmpty()) {
+            initializeIndexer();
         }
     } else {
         onLogMessage("No saved configuration found, manual setup required");
@@ -455,6 +459,13 @@ void MainWindow::onClientRegistered(bool success, const QString& message) {
         refreshButton_->setEnabled(true);
         downloadButton_->setEnabled(true);
         uploadButton_->setEnabled(true);
+        
+        // 如果索引器未初始化且共享路径已设置，初始化索引器
+        if (!indexer_ && !client_->getSharePath().isEmpty()) {
+            onLogMessage("Initializing content indexer after successful registration...");
+            initializeIndexer();
+        }
+        
         // 静默注册成功，不显示弹窗
     } else {
         QMessageBox::critical(this, "错误", "注册失败: " + message);
