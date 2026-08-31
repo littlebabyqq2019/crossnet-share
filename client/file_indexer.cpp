@@ -647,8 +647,14 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
     
     emit logMessage(QString("[FileIndexer] Searching for: '%1'").arg(query));
     
-    // 使用 LIKE 查询而不是 FTS MATCH（因为 Simple 扩展无法加载）
-    // LIKE 查询完全支持中文，但性能较慢（文件量小时可接受）
+    // 检查是否包含布尔运算符
+    QString upperQuery = query.toUpper();
+    if (upperQuery.contains(" AND ") || upperQuery.contains(" OR ") || upperQuery.contains(" NOT ")) {
+        emit logMessage("[FileIndexer] Detected boolean operators, using boolean search");
+        return searchWithBoolean(query, fileTypes);
+    }
+    
+    // 使用简单 LIKE 查询
     QSqlQuery sqlQuery(db_);
     
     QString sql = 
@@ -669,7 +675,6 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
     sql += " LIMIT 1000";
     
     emit logMessage(QString("[FileIndexer] Using LIKE search (Chinese-compatible)"));
-    emit logMessage(QString("[FileIndexer] SQL: %1").arg(sql));
     
     // LIKE 查询需要 % 通配符
     QString likePattern = "%" + query + "%";
@@ -693,6 +698,143 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
         emit logMessage(QString("[FileIndexer] Search completed: %1 results").arg(results.size()));
     } else {
         emit logMessage(QString("[FileIndexer] Search query failed: %1").arg(sqlQuery.lastError().text()));
+    }
+    
+    return results;
+}
+
+QStringList FileIndexer::searchWithBoolean(const QString& query, const QStringList& fileTypes) {
+    // 解析布尔查询
+    // 支持格式: "term1 AND term2", "term1 OR term2", "term1 NOT term2"
+    
+    emit logMessage(QString("[FileIndexer] Parsing boolean query: %1").arg(query));
+    
+    QStringList andTerms;
+    QStringList orTerms;
+    QStringList notTerms;
+    
+    // 简单的解析：按 AND/OR/NOT 分割
+    QString currentQuery = query;
+    
+    // 处理 NOT（优先级最高）
+    QRegExp notRegex("\\s+NOT\\s+", Qt::CaseInsensitive);
+    int notPos = 0;
+    while ((notPos = notRegex.indexIn(currentQuery, notPos)) != -1) {
+        // 提取 NOT 后面的词
+        int endPos = currentQuery.indexOf(QRegExp("\\s+(AND|OR)\\s+", Qt::CaseInsensitive), notPos + 5);
+        QString notTerm;
+        if (endPos == -1) {
+            notTerm = currentQuery.mid(notPos + 5).trimmed();
+            currentQuery = currentQuery.left(notPos);
+        } else {
+            notTerm = currentQuery.mid(notPos + 5, endPos - notPos - 5).trimmed();
+            currentQuery = currentQuery.left(notPos) + currentQuery.mid(endPos);
+        }
+        if (!notTerm.isEmpty()) {
+            notTerms << notTerm;
+            emit logMessage(QString("[FileIndexer]   NOT term: %1").arg(notTerm));
+        }
+        notPos = 0; // 重新开始
+    }
+    
+    // 处理 OR
+    if (currentQuery.contains(QRegExp("\\s+OR\\s+", Qt::CaseInsensitive))) {
+        orTerms = currentQuery.split(QRegExp("\\s+OR\\s+", Qt::CaseInsensitive), QString::SkipEmptyParts);
+        for (QString& term : orTerms) {
+            term = term.trimmed();
+            if (!term.isEmpty()) {
+                emit logMessage(QString("[FileIndexer]   OR term: %1").arg(term));
+            }
+        }
+    }
+    // 处理 AND
+    else if (currentQuery.contains(QRegExp("\\s+AND\\s+", Qt::CaseInsensitive))) {
+        andTerms = currentQuery.split(QRegExp("\\s+AND\\s+", Qt::CaseInsensitive), QString::SkipEmptyParts);
+        for (QString& term : andTerms) {
+            term = term.trimmed();
+            if (!term.isEmpty()) {
+                emit logMessage(QString("[FileIndexer]   AND term: %1").arg(term));
+            }
+        }
+    }
+    // 没有运算符
+    else if (!currentQuery.trimmed().isEmpty()) {
+        andTerms << currentQuery.trimmed();
+    }
+    
+    // 构建 SQL 查询
+    QSqlQuery sqlQuery(db_);
+    QString sql = "SELECT DISTINCT f.file_path, f.file_name FROM files f "
+                  "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) WHERE ";
+    
+    QStringList conditions;
+    QList<QString> bindValues;
+    
+    // AND 条件：所有词都必须出现
+    if (!andTerms.isEmpty()) {
+        QStringList andConditions;
+        for (const QString& term : andTerms) {
+            andConditions << "(fts.content LIKE ? OR fts.file_name LIKE ?)";
+            bindValues << ("%" + term + "%") << ("%" + term + "%");
+        }
+        conditions << "(" + andConditions.join(" AND ") + ")";
+    }
+    
+    // OR 条件：任一词出现即可
+    if (!orTerms.isEmpty()) {
+        QStringList orConditions;
+        for (const QString& term : orTerms) {
+            orConditions << "(fts.content LIKE ? OR fts.file_name LIKE ?)";
+            bindValues << ("%" + term + "%") << ("%" + term + "%");
+        }
+        conditions << "(" + orConditions.join(" OR ") + ")";
+    }
+    
+    // NOT 条件：不能包含这些词
+    for (const QString& term : notTerms) {
+        conditions << "(fts.content NOT LIKE ? AND fts.file_name NOT LIKE ?)";
+        bindValues << ("%" + term + "%") << ("%" + term + "%");
+    }
+    
+    if (conditions.isEmpty()) {
+        emit logMessage("[FileIndexer] No valid search terms found");
+        return QStringList();
+    }
+    
+    sql += conditions.join(" AND ");
+    
+    // 添加文件类型过滤
+    if (!fileTypes.isEmpty()) {
+        QStringList placeholders;
+        for (int i = 0; i < fileTypes.size(); ++i) {
+            placeholders << "?";
+        }
+        sql += " AND f.file_type IN (" + placeholders.join(", ") + ")";
+    }
+    
+    sql += " LIMIT 1000";
+    
+    emit logMessage(QString("[FileIndexer] Boolean SQL: %1").arg(sql));
+    
+    sqlQuery.prepare(sql);
+    for (const QString& value : bindValues) {
+        sqlQuery.addBindValue(value);
+    }
+    for (const QString& type : fileTypes) {
+        sqlQuery.addBindValue(type);
+    }
+    
+    QStringList results;
+    if (sqlQuery.exec()) {
+        while (sqlQuery.next()) {
+            QString filePath = sqlQuery.value(0).toString();
+            QString fileName = sqlQuery.value(1).toString();
+            results << filePath;
+            emit logMessage(QString("[FileIndexer]   Found: %1").arg(fileName));
+        }
+        emit logMessage(QString("[FileIndexer] Boolean search completed: %1 results").arg(results.size()));
+    } else {
+        emit logMessage(QString("[FileIndexer] Boolean search failed: %1").arg(sqlQuery.lastError().text()));
     }
     
     return results;

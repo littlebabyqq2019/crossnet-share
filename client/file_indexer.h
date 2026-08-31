@@ -112,6 +112,10 @@ private:
     // FTS5 查询构建
     QString buildFTS5Query(const QString& userQuery) const;
     
+    // 布尔查询解析和执行
+    QStringList parseBooleanQuery(const QString& query);
+    QStringList searchWithBoolean(const QString& query, const QStringList& fileTypes);
+    
     // 工具函数
     bool matchesPattern(const QString& filePath, const QStringList& patterns) const;
     QString getFileExtension(const QString& filePath) const;
