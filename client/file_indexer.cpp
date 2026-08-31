@@ -95,7 +95,12 @@ bool FileIndexer::initializeDatabase() {
         return false;
     }
     
-    emit logMessage("[FileIndexer] Database opened successfully, creating tables...");
+    emit logMessage("[FileIndexer] Database opened successfully");
+    
+    // 尝试加载 Simple 扩展（用于中文分词）
+    loadSimpleExtension();
+    
+    emit logMessage("[FileIndexer] Creating tables...");
     
     bool tablesCreated = createTables();
     if (!tablesCreated) {
@@ -105,6 +110,42 @@ bool FileIndexer::initializeDatabase() {
     }
     
     return tablesCreated;
+}
+
+void FileIndexer::loadSimpleExtension() {
+    // 查找 simple 扩展库
+    QString appDir = QCoreApplication::applicationDirPath();
+    
+#ifdef Q_OS_WIN
+    QString simpleLib = appDir + "/simple.dll";
+#elif defined(Q_OS_MAC)
+    QString simpleLib = appDir + "/libsimple.dylib";
+#else
+    QString simpleLib = appDir + "/libsimple.so";
+#endif
+    
+    emit logMessage(QString("[FileIndexer] Looking for Simple extension: %1").arg(simpleLib));
+    
+    if (!QFileInfo::exists(simpleLib)) {
+        emit logMessage("[FileIndexer] Simple extension not found, will use unicode61 tokenizer");
+        emit logMessage("[FileIndexer] Note: Chinese search may not work optimally");
+        return;
+    }
+    
+    emit logMessage("[FileIndexer] Found Simple extension, attempting to load...");
+    
+    // 加载扩展
+    QSqlQuery query(db_);
+    
+    // SQLite load_extension 需要先启用扩展加载
+    if (!query.exec("SELECT load_extension('" + simpleLib + "')")) {
+        emit logMessage(QString("[FileIndexer] Failed to load Simple extension: %1").arg(query.lastError().text()));
+        emit logMessage("[FileIndexer] Will use unicode61 tokenizer instead");
+        return;
+    }
+    
+    emit logMessage("[FileIndexer] Simple extension loaded successfully!");
+    emit logMessage("[FileIndexer] Chinese full-text search enabled with jieba tokenizer");
 }
 
 bool FileIndexer::createTables() {
@@ -131,15 +172,21 @@ bool FileIndexer::createTables() {
     
     emit logMessage("[FileIndexer] Files table created, creating FTS5 table...");
     
+    // 检测是否可以使用 Simple tokenizer
+    QString tokenizer = detectBestTokenizer();
+    emit logMessage(QString("[FileIndexer] Using tokenizer: %1").arg(tokenizer));
+    
     // 创建 FTS5 全文搜索表
-    if (!query.exec(
+    QString createFtsTable = QString(
         "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5("
         "  file_id UNINDEXED,"
         "  file_name,"
         "  content,"
-        "  tokenize='unicode61 remove_diacritics 2'"
+        "  tokenize='%1'"
         ")"
-    )) {
+    ).arg(tokenizer);
+    
+    if (!query.exec(createFtsTable)) {
         emit logMessage(QString("[FileIndexer] Failed to create FTS5 table: %1").arg(query.lastError().text()));
         emit logMessage("[FileIndexer] This may indicate FTS5 is not available in your SQLite build");
         emit logMessage("[FileIndexer] Try checking SQLite version and FTS5 support");
@@ -165,6 +212,22 @@ bool FileIndexer::createTables() {
     
     emit logMessage("[FileIndexer] Index database tables created successfully");
     return true;
+}
+
+QString FileIndexer::detectBestTokenizer() {
+    // 测试是否支持 Simple tokenizer
+    QSqlQuery query(db_);
+    
+    // 尝试创建临时表使用 simple tokenizer
+    if (query.exec("CREATE VIRTUAL TABLE IF NOT EXISTS _test_simple USING fts5(content, tokenize='simple')")) {
+        query.exec("DROP TABLE _test_simple");
+        emit logMessage("[FileIndexer] Simple tokenizer is available");
+        return "simple";
+    }
+    
+    // 否则使用 unicode61
+    emit logMessage("[FileIndexer] Simple tokenizer not available, using unicode61");
+    return "unicode61 remove_diacritics 2";
 }
 
 void FileIndexer::start() {

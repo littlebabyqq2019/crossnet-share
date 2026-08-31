@@ -35,6 +35,40 @@ jobs:
     - name: Setup MSVC
       uses: microsoft/setup-msbuild@v2
 
+    - name: Build Simple FTS5 Extension
+      run: |
+        echo "Building Simple FTS5 extension for Chinese tokenization..."
+        
+        # 创建 third_party 目录
+        mkdir -Force third_party
+        cd third_party
+        
+        # 克隆 Simple 仓库
+        git clone --depth 1 https://github.com/wangfenjin/simple.git
+        cd simple
+        
+        # 创建构建目录
+        mkdir build
+        cd build
+        
+        # 配置和构建
+        cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+        cmake --build . --config Release
+        
+        # 返回根目录
+        cd ../../..
+        
+        # 检查构建结果
+        if (Test-Path "third_party/simple/build/Release/simple.dll") {
+          echo "✓ Simple extension built successfully"
+        } elseif (Test-Path "third_party/simple/build/libsimple/Release/simple.dll") {
+          echo "✓ Simple extension built successfully (alternate location)"
+        } else {
+          echo "⚠ Warning: simple.dll not found in expected locations"
+          echo "Listing build directory contents:"
+          Get-ChildItem -Recurse third_party/simple/build -Filter "*.dll"
+        }
+
     - name: Configure CMake
       run: |
         mkdir build
@@ -51,6 +85,42 @@ jobs:
         cd build/bin/Release
         & "${{ env.Qt5_DIR }}/bin/windeployqt.exe" --release CrossNetShareServer.exe
         & "${{ env.Qt5_DIR }}/bin/windeployqt.exe" --release CrossNetShareClient.exe
+        
+        # 复制 Simple 扩展到客户端目录
+        Write-Host "Copying Simple FTS5 extension..."
+        
+        # 尝试多个可能的路径
+        $simplePaths = @(
+          "../../../third_party/simple/build/Release/simple.dll",
+          "../../../third_party/simple/build/libsimple/Release/simple.dll",
+          "../../../third_party/simple/build/simple.dll"
+        )
+        
+        $simpleCopied = $false
+        foreach ($path in $simplePaths) {
+          if (Test-Path $path) {
+            Copy-Item $path . -Force
+            Write-Host "✓ Copied simple.dll from $path"
+            $simpleCopied = $true
+            break
+          }
+        }
+        
+        if (-not $simpleCopied) {
+          Write-Host "⚠ Warning: simple.dll not found, client will fall back to unicode61 tokenizer"
+          Write-Host "   Chinese search may not work optimally"
+        }
+        
+        # 复制 jieba 词典文件（如果存在）
+        $dictPath = "../../../third_party/simple/dict"
+        if (Test-Path $dictPath) {
+          Write-Host "Copying jieba dictionaries..."
+          New-Item -ItemType Directory -Force -Path "dict" | Out-Null
+          Copy-Item "$dictPath/*" dict/ -Recurse -Force
+          Write-Host "✓ Copied jieba dictionaries"
+        } else {
+          Write-Host "⚠ Warning: jieba dictionary not found at $dictPath"
+        }
 
     - name: Package Release
       run: |
@@ -75,6 +145,12 @@ jobs:
         Copy-Item build/bin/Release/styles CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/plugins CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/sqldrivers CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
+        
+        # 复制 jieba 词典（如果存在）
+        if (Test-Path build/bin/Release/dict) {
+          Copy-Item build/bin/Release/dict CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
+          Write-Host "✓ Copied jieba dictionaries to release package"
+        }
 
         # 复制文档
         Copy-Item README.md CrossNetShare-Release/

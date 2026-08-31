@@ -90,6 +90,8 @@ private:
     // 数据库操作
     bool initializeDatabase();
     bool createTables();
+    void loadSimpleExtension();
+    QString detectBestTokenizer();
     
     // 文本提取
     QString extractText(const QString& filePath);
