@@ -622,6 +622,13 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
         }
     }
     
+    // 关键测试：检查 content 字段是否有数据
+    testQuery.exec("SELECT LENGTH(content) as len, file_name FROM files_fts LIMIT 3");
+    emit logMessage("[FileIndexer] Checking content field lengths:");
+    while (testQuery.next()) {
+        emit logMessage(QString("  - %1: %2 characters").arg(testQuery.value(1).toString()).arg(testQuery.value(0).toInt()));
+    }
+    
     QSqlQuery sqlQuery(db_);
     
     // FTS5 表使用 rowid，不能用 file_id JOIN
