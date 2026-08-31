@@ -587,11 +587,15 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
     emit logMessage(QString("[FileIndexer] Searching for: '%1' (FTS query: '%2')").arg(query).arg(ftsQuery));
     
     QSqlQuery sqlQuery(db_);
+    
+    // FTS5 表使用 rowid，不能用 file_id JOIN
+    // 我们需要先从 FTS 表搜索，然后用 file_id 关联 files 表
     QString sql = 
         "SELECT DISTINCT f.file_path "
         "FROM files f "
-        "JOIN files_fts fts ON f.file_id = fts.file_id "
-        "WHERE fts MATCH ?";  // 修复：使用别名 fts 而不是 files_fts
+        "WHERE f.file_id IN ("
+        "  SELECT CAST(file_id AS INTEGER) FROM files_fts WHERE files_fts MATCH ?"
+        ")";
     
     // 添加文件类型过滤
     if (!fileTypes.isEmpty()) {
@@ -602,7 +606,7 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
         sql += " AND f.file_type IN (" + placeholders.join(", ") + ")";
     }
     
-    sql += " ORDER BY rank LIMIT 1000";
+    sql += " LIMIT 1000";
     
     emit logMessage(QString("[FileIndexer] SQL: %1").arg(sql));
     
