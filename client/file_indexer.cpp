@@ -64,6 +64,11 @@ bool FileIndexer::initialize(const QString& sharedPath, const QString& dbPath) {
 }
 
 bool FileIndexer::initializeDatabase() {
+    // 如果已经有连接，先移除
+    if (QSqlDatabase::contains("index_db")) {
+        QSqlDatabase::removeDatabase("index_db");
+    }
+    
     // 创建数据库连接
     db_ = QSqlDatabase::addDatabase("QSQLITE", "index_db");
     db_.setDatabaseName(dbPath_);
