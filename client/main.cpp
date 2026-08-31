@@ -4,7 +4,6 @@
 #include <QFile>
 #include <QTextStream>
 #include <QDateTime>
-#include <QSqlDatabase>
 #include <QStandardPaths>
 
 int main(int argc, char* argv[]) {
@@ -29,15 +28,16 @@ int main(int argc, char* argv[]) {
             log << "  - " << path << "\n";
         }
         
-        log << "Available SQL drivers: " << QSqlDatabase::drivers().join(", ") << "\n";
+        // 注意：v2.0.0 使用独立的 SQLite C API，不再依赖 Qt SQL
+        log << "Using independent SQLite C API with FTS5 support\n";
         
-        // 检查文件是否存在
-        QStringList driverPaths;
-        driverPaths << appDir + "/sqldrivers/qsqlite.dll";
-        driverPaths << appDir + "/plugins/sqldrivers/qsqlite.dll";
+        // 检查 SQLite DLL 是否存在
+        QStringList sqlitePaths;
+        sqlitePaths << appDir + "/sqlite3.dll";
+        sqlitePaths << appDir + "/simple.dll";
         
-        log << "Checking for qsqlite.dll:\n";
-        for (const QString& path : driverPaths) {
+        log << "Checking for SQLite libraries:\n";
+        for (const QString& path : sqlitePaths) {
             log << "  " << path << ": " << (QFile::exists(path) ? "EXISTS" : "NOT FOUND") << "\n";
         }
         

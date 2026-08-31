@@ -18,7 +18,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # 查找依赖库
-find_package(Qt5 COMPONENTS Core Widgets Network Sql Concurrent REQUIRED)
+find_package(Qt5 COMPONENTS Core Widgets Network Concurrent REQUIRED)
 
 # 第三方库 - nlohmann/json (header-only)
 include(FetchContent)
