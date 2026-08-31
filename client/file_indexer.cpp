@@ -356,12 +356,14 @@ void FileIndexer::indexFile(const QString& filePath) {
     query.addBindValue(hash);
     
     if (!query.exec()) {
-        qWarning() << "Failed to insert file metadata:" << query.lastError().text();
+        emit logMessage(QString("[FileIndexer] Failed to insert file metadata: %1").arg(query.lastError().text()));
         return;
     }
     
     // 获取文件ID
     qint64 fileId = query.lastInsertId().toLongLong();
+    
+    emit logMessage(QString("[FileIndexer] Inserted file metadata, ID: %1").arg(fileId));
     
     // 插入或更新FTS索引
     query.prepare(
@@ -373,11 +375,11 @@ void FileIndexer::indexFile(const QString& filePath) {
     query.addBindValue(content);
     
     if (!query.exec()) {
-        qWarning() << "Failed to insert FTS index:" << query.lastError().text();
+        emit logMessage(QString("[FileIndexer] Failed to insert FTS index: %1").arg(query.lastError().text()));
         return;
     }
     
-    qDebug() << "Indexed file:" << filePath;
+    emit logMessage(QString("[FileIndexer] Successfully indexed: %1").arg(fileInfo.fileName()));
     emit fileIndexed(filePath);
 }
 
@@ -582,12 +584,14 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
     
     QString ftsQuery = buildFTS5Query(query);
     
+    emit logMessage(QString("[FileIndexer] Searching for: '%1' (FTS query: '%2')").arg(query).arg(ftsQuery));
+    
     QSqlQuery sqlQuery(db_);
     QString sql = 
         "SELECT DISTINCT f.file_path "
         "FROM files f "
         "JOIN files_fts fts ON f.file_id = fts.file_id "
-        "WHERE files_fts MATCH ?";
+        "WHERE fts MATCH ?";  // 修复：使用别名 fts 而不是 files_fts
     
     // 添加文件类型过滤
     if (!fileTypes.isEmpty()) {
@@ -599,6 +603,8 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
     }
     
     sql += " ORDER BY rank LIMIT 1000";
+    
+    emit logMessage(QString("[FileIndexer] SQL: %1").arg(sql));
     
     sqlQuery.prepare(sql);
     sqlQuery.addBindValue(ftsQuery);
@@ -612,11 +618,11 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
         while (sqlQuery.next()) {
             results << sqlQuery.value(0).toString();
         }
+        emit logMessage(QString("[FileIndexer] Search found %1 results").arg(results.size()));
     } else {
-        qWarning() << "Search query failed:" << sqlQuery.lastError().text();
+        emit logMessage(QString("[FileIndexer] Search query failed: %1").arg(sqlQuery.lastError().text()));
     }
     
-    qDebug() << "Search for" << query << "found" << results.size() << "results";
     return results;
 }
 
