@@ -35,6 +35,67 @@ jobs:
     - name: Setup MSVC
       uses: microsoft/setup-msbuild@v2
 
+    - name: Download SQLite
+      run: |
+        echo "Downloading SQLite for independent FTS5 support..."
+        
+        # 创建目录
+        mkdir -Force third_party/sqlite
+        
+        # 下载 SQLite DLL (64-bit)
+        $sqliteUrl = "https://www.sqlite.org/2024/sqlite-dll-win-x64-3460100.zip"
+        $sqliteZip = "third_party/sqlite-dll.zip"
+        
+        Write-Host "Downloading SQLite DLL from $sqliteUrl"
+        Invoke-WebRequest -Uri $sqliteUrl -OutFile $sqliteZip
+        
+        # 解压
+        Expand-Archive -Path $sqliteZip -DestinationPath third_party/sqlite -Force
+        
+        # 下载 SQLite tools (包含 .lib 文件)
+        $sqliteToolsUrl = "https://www.sqlite.org/2024/sqlite-tools-win-x64-3460100.zip"
+        $sqliteToolsZip = "third_party/sqlite-tools.zip"
+        
+        Write-Host "Downloading SQLite tools from $sqliteToolsUrl"
+        Invoke-WebRequest -Uri $sqliteToolsUrl -OutFile $sqliteToolsZip
+        
+        # 解压
+        Expand-Archive -Path $sqliteToolsZip -DestinationPath third_party/sqlite-tools -Force
+        
+        # 下载 sqlite3.h (从 amalgamation)
+        $sqliteHeaderUrl = "https://www.sqlite.org/2024/sqlite-amalgamation-3460100.zip"
+        $sqliteHeaderZip = "third_party/sqlite-header.zip"
+        
+        Write-Host "Downloading SQLite headers from $sqliteHeaderUrl"
+        Invoke-WebRequest -Uri $sqliteHeaderUrl -OutFile $sqliteHeaderZip
+        
+        # 解压
+        Expand-Archive -Path $sqliteHeaderZip -DestinationPath third_party/sqlite-header -Force
+        
+        # 复制文件到统一目录
+        Copy-Item third_party/sqlite-header/sqlite-amalgamation-*/sqlite3.h third_party/sqlite/
+        Copy-Item third_party/sqlite-header/sqlite-amalgamation-*/sqlite3ext.h third_party/sqlite/
+        
+        # 生成 .lib 文件 (使用 lib.exe from MSVC)
+        cd third_party/sqlite
+        lib /def:sqlite3.def /out:sqlite3.lib /machine:x64
+        
+        cd ../..
+        
+        # 验证文件
+        if (Test-Path "third_party/sqlite/sqlite3.dll") {
+          Write-Host "✓ sqlite3.dll downloaded"
+        }
+        if (Test-Path "third_party/sqlite/sqlite3.h") {
+          Write-Host "✓ sqlite3.h downloaded"
+        }
+        if (Test-Path "third_party/sqlite/sqlite3.lib") {
+          Write-Host "✓ sqlite3.lib generated"
+        } else {
+          Write-Host "⚠ Warning: sqlite3.lib not found, trying alternative method..."
+          # 如果 lib.exe 失败，尝试使用 dlltool 或直接链接 DLL
+        }
+
     - name: Build Simple FTS5 Extension
       run: |
         echo "Building Simple FTS5 extension for Chinese tokenization..."

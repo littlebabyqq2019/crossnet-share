@@ -3,8 +3,6 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QDirIterator>
-#include <QSqlQuery>
-#include <QSqlError>
 #include <QTextStream>
 #include <QTextCodec>
 #include <QCryptographicHash>
@@ -12,17 +10,23 @@
 #include <QDebug>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QCoreApplication>
 #include <QtConcurrent>
+
+// SQLite C API
+#include <sqlite3.h>
 
 namespace CrossNetShare {
 
 FileIndexer::FileIndexer(QObject* parent)
     : QObject(parent)
+    , db_(nullptr)
     , fileWatcher_(nullptr)
     , scanTimer_(nullptr)
     , queueTimer_(nullptr)
     , isRunning_(false)
     , isIndexing_(false)
+    , simpleLoaded_(false)
 {
     fileWatcher_ = new QFileSystemWatcher(this);
     scanTimer_ = new QTimer(this);
@@ -45,8 +49,9 @@ FileIndexer::FileIndexer(QObject* parent)
 
 FileIndexer::~FileIndexer() {
     stop();
-    if (db_.isOpen()) {
-        db_.close();
+    if (db_) {
+        sqlite3_close(db_);
+        db_ = nullptr;
     }
 }
 
@@ -70,35 +75,88 @@ bool FileIndexer::initialize(const QString& sharedPath, const QString& dbPath) {
     return true;
 }
 
-bool FileIndexer::initializeDatabase() {
-    emit logMessage("[FileIndexer] Checking for existing database connection...");
+// SQLite C API 辅助函数
+bool FileIndexer::execSQL(const char* sql, QString* error) {
+    char* errMsg = nullptr;
+    int rc = sqlite3_exec(db_, sql, nullptr, nullptr, &errMsg);
     
-    // 如果已经有连接，先移除
-    if (QSqlDatabase::contains("index_db")) {
-        emit logMessage("[FileIndexer] Removing existing database connection");
-        QSqlDatabase::removeDatabase("index_db");
+    if (rc != SQLITE_OK) {
+        QString errorStr = errMsg ? QString::fromUtf8(errMsg) : "Unknown error";
+        emit logMessage(QString("[FileIndexer] SQL error: %1").arg(errorStr));
+        emit logMessage(QString("[FileIndexer] SQL: %1").arg(QString::fromUtf8(sql)));
+        if (error) {
+            *error = errorStr;
+        }
+        if (errMsg) {
+            sqlite3_free(errMsg);
+        }
+        return false;
     }
     
-    emit logMessage("[FileIndexer] Creating new database connection");
-    emit logMessage(QString("[FileIndexer] Available SQL drivers: %1").arg(QSqlDatabase::drivers().join(", ")));
+    return true;
+}
+
+bool FileIndexer::execSQL(const QString& sql, QString* error) {
+    return execSQL(sql.toUtf8().constData(), error);
+}
+
+QString FileIndexer::escapeString(const QString& str) const {
+    QString escaped = str;
+    escaped.replace("'", "''");
+    return escaped;
+}
+
+qint64 FileIndexer::getLastInsertId() {
+    return sqlite3_last_insert_rowid(db_);
+}
+
+bool FileIndexer::prepareStatement(const QString& sql, sqlite3_stmt** stmt) {
+    int rc = sqlite3_prepare_v2(db_, sql.toUtf8().constData(), -1, stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        emit logMessage(QString("[FileIndexer] Failed to prepare statement: %1")
+            .arg(QString::fromUtf8(sqlite3_errmsg(db_))));
+        emit logMessage(QString("[FileIndexer] SQL: %1").arg(sql));
+        return false;
+    }
+    return true;
+}
+
+void FileIndexer::finalizeStatement(sqlite3_stmt* stmt) {
+    if (stmt) {
+        sqlite3_finalize(stmt);
+    }
+}
+
+bool FileIndexer::initializeDatabase() {
+    emit logMessage("[FileIndexer] Opening database with SQLite C API...");
     
-    // 创建数据库连接
-    db_ = QSqlDatabase::addDatabase("QSQLITE", "index_db");
-    db_.setDatabaseName(dbPath_);
-    
-    emit logMessage(QString("[FileIndexer] Opening database: %1").arg(dbPath_));
-    
-    if (!db_.open()) {
-        emit logMessage(QString("[FileIndexer] Failed to open index database: %1").arg(db_.lastError().text()));
+    // 打开数据库
+    int rc = sqlite3_open(dbPath_.toUtf8().constData(), &db_);
+    if (rc != SQLITE_OK) {
+        QString error = db_ ? QString::fromUtf8(sqlite3_errmsg(db_)) : "Unknown error";
+        emit logMessage(QString("[FileIndexer] Failed to open database: %1").arg(error));
         emit logMessage(QString("[FileIndexer] Database path: %1").arg(dbPath_));
-        emit logMessage(QString("[FileIndexer] Database driver valid: %1").arg(db_.driver() ? "yes" : "no"));
+        if (db_) {
+            sqlite3_close(db_);
+            db_ = nullptr;
+        }
         return false;
     }
     
     emit logMessage("[FileIndexer] Database opened successfully");
     
+    // 启用扩展加载（关键！这是迁移到独立 SQLite 的主要原因）
+    rc = sqlite3_enable_load_extension(db_, 1);
+    if (rc != SQLITE_OK) {
+        emit logMessage(QString("[FileIndexer] Failed to enable extensions: %1")
+            .arg(QString::fromUtf8(sqlite3_errmsg(db_))));
+        emit logMessage("[FileIndexer] Will continue without extensions");
+    } else {
+        emit logMessage("[FileIndexer] Extension loading enabled");
+    }
+    
     // 尝试加载 Simple 扩展（用于中文分词）
-    loadSimpleExtension();
+    simpleLoaded_ = loadSimpleExtension();
     
     emit logMessage("[FileIndexer] Creating tables...");
     
@@ -112,7 +170,7 @@ bool FileIndexer::initializeDatabase() {
     return tablesCreated;
 }
 
-void FileIndexer::loadSimpleExtension() {
+bool FileIndexer::loadSimpleExtension() {
     // 查找 simple 扩展库
     QString appDir = QCoreApplication::applicationDirPath();
     
@@ -129,44 +187,54 @@ void FileIndexer::loadSimpleExtension() {
     if (!QFileInfo::exists(simpleLib)) {
         emit logMessage("[FileIndexer] Simple extension not found, will use unicode61 tokenizer");
         emit logMessage("[FileIndexer] Note: Chinese search may not work optimally");
-        return;
+        return false;
     }
     
     emit logMessage("[FileIndexer] Found Simple extension, attempting to load...");
     
-    // 加载扩展
-    QSqlQuery query(db_);
+    // 使用 SQLite C API 加载扩展
+    char* errMsg = nullptr;
+    int rc = sqlite3_load_extension(
+        db_,
+        simpleLib.toUtf8().constData(),
+        nullptr,  // entry point (使用默认)
+        &errMsg
+    );
     
-    // SQLite load_extension 需要先启用扩展加载
-    if (!query.exec("SELECT load_extension('" + simpleLib + "')")) {
-        emit logMessage(QString("[FileIndexer] Failed to load Simple extension: %1").arg(query.lastError().text()));
+    if (rc != SQLITE_OK) {
+        QString error = errMsg ? QString::fromUtf8(errMsg) : "Unknown error";
+        emit logMessage(QString("[FileIndexer] Failed to load Simple extension: %1").arg(error));
         emit logMessage("[FileIndexer] Will use unicode61 tokenizer instead");
-        return;
+        if (errMsg) {
+            sqlite3_free(errMsg);
+        }
+        return false;
     }
     
     emit logMessage("[FileIndexer] Simple extension loaded successfully!");
     emit logMessage("[FileIndexer] Chinese full-text search enabled with jieba tokenizer");
+    return true;
 }
 
 bool FileIndexer::createTables() {
-    QSqlQuery query(db_);
-    
     emit logMessage("[FileIndexer] Creating files table...");
     
     // 创建文件元数据表
-    if (!query.exec(
-        "CREATE TABLE IF NOT EXISTS files ("
-        "  file_id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  file_path TEXT UNIQUE NOT NULL,"
-        "  file_name TEXT NOT NULL,"
-        "  file_size INTEGER,"
-        "  file_type TEXT,"
-        "  modified_time INTEGER,"
-        "  indexed_time INTEGER,"
-        "  content_hash TEXT"
-        ")"
-    )) {
-        emit logMessage(QString("[FileIndexer] Failed to create files table: %1").arg(query.lastError().text()));
+    const char* createFilesSql = R"(
+        CREATE TABLE IF NOT EXISTS files (
+            file_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT UNIQUE NOT NULL,
+            file_name TEXT NOT NULL,
+            file_size INTEGER,
+            file_type TEXT,
+            modified_time INTEGER,
+            indexed_time INTEGER,
+            content_hash TEXT
+        )
+    )";
+    
+    if (!execSQL(createFilesSql)) {
+        emit logMessage("[FileIndexer] Failed to create files table");
         return false;
     }
     
@@ -186,43 +254,45 @@ bool FileIndexer::createTables() {
         ")"
     ).arg(tokenizer);
     
-    if (!query.exec(createFtsTable)) {
-        emit logMessage(QString("[FileIndexer] Failed to create FTS5 table: %1").arg(query.lastError().text()));
+    if (!execSQL(createFtsTable)) {
+        emit logMessage("[FileIndexer] Failed to create FTS5 table");
         emit logMessage("[FileIndexer] This may indicate FTS5 is not available in your SQLite build");
-        emit logMessage("[FileIndexer] Try checking SQLite version and FTS5 support");
         return false;
     }
     
     emit logMessage("[FileIndexer] FTS5 table created, creating config table...");
     
     // 创建配置表
-    if (!query.exec(
-        "CREATE TABLE IF NOT EXISTS index_config ("
-        "  key TEXT PRIMARY KEY,"
-        "  value TEXT"
-        ")"
-    )) {
-        emit logMessage(QString("[FileIndexer] Failed to create config table: %1").arg(query.lastError().text()));
+    const char* createConfigSql = R"(
+        CREATE TABLE IF NOT EXISTS index_config (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    )";
+    
+    if (!execSQL(createConfigSql)) {
+        emit logMessage("[FileIndexer] Failed to create config table");
         return false;
     }
     
     // 创建索引
-    query.exec("CREATE INDEX IF NOT EXISTS idx_file_path ON files(file_path)");
-    query.exec("CREATE INDEX IF NOT EXISTS idx_file_type ON files(file_type)");
+    execSQL("CREATE INDEX IF NOT EXISTS idx_file_path ON files(file_path)");
+    execSQL("CREATE INDEX IF NOT EXISTS idx_file_type ON files(file_type)");
     
     emit logMessage("[FileIndexer] Index database tables created successfully");
     return true;
 }
 
 QString FileIndexer::detectBestTokenizer() {
-    // 测试是否支持 Simple tokenizer
-    QSqlQuery query(db_);
-    
-    // 尝试创建临时表使用 simple tokenizer
-    if (query.exec("CREATE VIRTUAL TABLE IF NOT EXISTS _test_simple USING fts5(content, tokenize='simple')")) {
-        query.exec("DROP TABLE _test_simple");
-        emit logMessage("[FileIndexer] Simple tokenizer is available");
-        return "simple";
+    // 如果 Simple 扩展已加载，使用 simple tokenizer
+    if (simpleLoaded_) {
+        // 测试是否真的可用
+        const char* testSql = "CREATE VIRTUAL TABLE IF NOT EXISTS _test_simple USING fts5(content, tokenize='simple')";
+        if (execSQL(testSql)) {
+            execSQL("DROP TABLE IF EXISTS _test_simple");
+            emit logMessage("[FileIndexer] Simple tokenizer is available");
+            return "simple";
+        }
     }
     
     // 否则使用 unicode61
@@ -294,11 +364,10 @@ void FileIndexer::rebuildIndex() {
     // 异步执行索引重建
     QtConcurrent::run([this]() {
         // 清空现有索引
-        QSqlQuery query(db_);
-        db_.transaction();
-        query.exec("DELETE FROM files");
-        query.exec("DELETE FROM files_fts");
-        db_.commit();
+        execSQL("BEGIN TRANSACTION");
+        execSQL("DELETE FROM files");
+        execSQL("DELETE FROM files_fts");
+        execSQL("COMMIT");
         
         // 扫描所有文件
         QStringList filters;
@@ -323,7 +392,7 @@ void FileIndexer::rebuildIndex() {
         qDebug() << "Found" << total << "files to index";
         
         // 批量索引
-        db_.transaction();
+        execSQL("BEGIN TRANSACTION");
         for (const QString& filePath : filesToIndex) {
             indexFile(filePath);
             current++;
@@ -333,11 +402,11 @@ void FileIndexer::rebuildIndex() {
             }
             
             if (current % 100 == 0) {
-                db_.commit();
-                db_.transaction();
+                execSQL("COMMIT");
+                execSQL("BEGIN TRANSACTION");
             }
         }
-        db_.commit();
+        execSQL("COMMIT");
         
         isIndexing_ = false;
         
@@ -351,11 +420,10 @@ void FileIndexer::rebuildIndex() {
 }
 
 void FileIndexer::clearIndex() {
-    QSqlQuery query(db_);
-    db_.transaction();
-    query.exec("DELETE FROM files");
-    query.exec("DELETE FROM files_fts");
-    db_.commit();
+    execSQL("BEGIN TRANSACTION");
+    execSQL("DELETE FROM files");
+    execSQL("DELETE FROM files_fts");
+    execSQL("COMMIT");
     
     stats_.totalFiles = 0;
     stats_.indexSizeMB = 0;
@@ -404,41 +472,57 @@ void FileIndexer::indexFile(const QString& filePath) {
     }
     
     // 插入或更新文件元数据
-    QSqlQuery query(db_);
-    query.prepare(
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql = 
         "INSERT OR REPLACE INTO files "
         "(file_path, file_name, file_size, file_type, modified_time, indexed_time, content_hash) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)"
-    );
-    query.addBindValue(filePath);
-    query.addBindValue(fileInfo.fileName());
-    query.addBindValue(fileInfo.size());
-    query.addBindValue(fileInfo.suffix().toLower());
-    query.addBindValue(fileInfo.lastModified().toSecsSinceEpoch());
-    query.addBindValue(QDateTime::currentDateTime().toSecsSinceEpoch());
-    query.addBindValue(hash);
+        "VALUES (?, ?, ?, ?, ?, ?, ?)";
     
-    if (!query.exec()) {
-        emit logMessage(QString("[FileIndexer] Failed to insert file metadata: %1").arg(query.lastError().text()));
+    if (!prepareStatement(QString::fromUtf8(sql), &stmt)) {
+        return;
+    }
+    
+    sqlite3_bind_text(stmt, 1, filePath.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, fileInfo.fileName().toUtf8().constData(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 3, fileInfo.size());
+    sqlite3_bind_text(stmt, 4, fileInfo.suffix().toLower().toUtf8().constData(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 5, fileInfo.lastModified().toSecsSinceEpoch());
+    sqlite3_bind_int64(stmt, 6, QDateTime::currentDateTime().toSecsSinceEpoch());
+    sqlite3_bind_text(stmt, 7, hash.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+    
+    int rc = sqlite3_step(stmt);
+    finalizeStatement(stmt);
+    
+    if (rc != SQLITE_DONE) {
+        emit logMessage(QString("[FileIndexer] Failed to insert file metadata: %1")
+            .arg(QString::fromUtf8(sqlite3_errmsg(db_))));
         return;
     }
     
     // 获取文件ID
-    qint64 fileId = query.lastInsertId().toLongLong();
+    qint64 fileId = getLastInsertId();
     
     emit logMessage(QString("[FileIndexer] Inserted file metadata, ID: %1").arg(fileId));
     
     // 插入或更新FTS索引
-    query.prepare(
+    const char* ftsSql = 
         "INSERT OR REPLACE INTO files_fts (file_id, file_name, content) "
-        "VALUES (?, ?, ?)"
-    );
-    query.addBindValue(fileId);
-    query.addBindValue(fileInfo.fileName());
-    query.addBindValue(content);
+        "VALUES (?, ?, ?)";
     
-    if (!query.exec()) {
-        emit logMessage(QString("[FileIndexer] Failed to insert FTS index: %1").arg(query.lastError().text()));
+    if (!prepareStatement(QString::fromUtf8(ftsSql), &stmt)) {
+        return;
+    }
+    
+    sqlite3_bind_int64(stmt, 1, fileId);
+    sqlite3_bind_text(stmt, 2, fileInfo.fileName().toUtf8().constData(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, content.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+    
+    rc = sqlite3_step(stmt);
+    finalizeStatement(stmt);
+    
+    if (rc != SQLITE_DONE) {
+        emit logMessage(QString("[FileIndexer] Failed to insert FTS index: %1")
+            .arg(QString::fromUtf8(sqlite3_errmsg(db_))));
         return;
     }
     
@@ -447,40 +531,64 @@ void FileIndexer::indexFile(const QString& filePath) {
 }
 
 void FileIndexer::removeFileFromIndex(const QString& filePath) {
-    QSqlQuery query(db_);
+    sqlite3_stmt* stmt = nullptr;
     
     // 获取文件ID
-    query.prepare("SELECT file_id FROM files WHERE file_path = ?");
-    query.addBindValue(filePath);
+    const char* selectSql = "SELECT file_id FROM files WHERE file_path = ?";
+    if (!prepareStatement(QString::fromUtf8(selectSql), &stmt)) {
+        return;
+    }
     
-    if (query.exec() && query.next()) {
-        qint64 fileId = query.value(0).toLongLong();
+    sqlite3_bind_text(stmt, 1, filePath.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+    
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        qint64 fileId = sqlite3_column_int64(stmt, 0);
+        finalizeStatement(stmt);
+        stmt = nullptr;
         
         // 删除FTS索引
-        query.prepare("DELETE FROM files_fts WHERE file_id = ?");
-        query.addBindValue(fileId);
-        query.exec();
+        const char* deleteFtsSql = "DELETE FROM files_fts WHERE file_id = ?";
+        if (prepareStatement(QString::fromUtf8(deleteFtsSql), &stmt)) {
+            sqlite3_bind_int64(stmt, 1, fileId);
+            sqlite3_step(stmt);
+            finalizeStatement(stmt);
+            stmt = nullptr;
+        }
         
         // 删除文件元数据
-        query.prepare("DELETE FROM files WHERE file_id = ?");
-        query.addBindValue(fileId);
-        query.exec();
+        const char* deleteFileSql = "DELETE FROM files WHERE file_id = ?";
+        if (prepareStatement(QString::fromUtf8(deleteFileSql), &stmt)) {
+            sqlite3_bind_int64(stmt, 1, fileId);
+            sqlite3_step(stmt);
+            finalizeStatement(stmt);
+        }
         
         qDebug() << "Removed from index:" << filePath;
+    } else {
+        finalizeStatement(stmt);
     }
 }
 
 bool FileIndexer::isFileIndexed(const QString& filePath, const QString& hash) const {
-    QSqlQuery query(db_);
-    query.prepare("SELECT content_hash FROM files WHERE file_path = ?");
-    query.addBindValue(filePath);
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql = "SELECT content_hash FROM files WHERE file_path = ?";
     
-    if (query.exec() && query.next()) {
-        QString storedHash = query.value(0).toString();
-        return storedHash == hash;
+    if (!const_cast<FileIndexer*>(this)->prepareStatement(QString::fromUtf8(sql), &stmt)) {
+        return false;
     }
     
-    return false;
+    sqlite3_bind_text(stmt, 1, filePath.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+    
+    bool result = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char* storedHash = sqlite3_column_text(stmt, 0);
+        if (storedHash) {
+            result = (QString::fromUtf8(reinterpret_cast<const char*>(storedHash)) == hash);
+        }
+    }
+    
+    const_cast<FileIndexer*>(this)->finalizeStatement(stmt);
+    return result;
 }
 
 QString FileIndexer::calculateFileHash(const QString& filePath) const {
@@ -654,14 +762,32 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
         return searchWithBoolean(query, fileTypes);
     }
     
-    // 使用简单 LIKE 查询
-    QSqlQuery sqlQuery(db_);
+    // 使用 FTS5 MATCH 查询（如果 Simple tokenizer 已加载）
+    QString sql;
+    QStringList bindValues;
     
-    QString sql = 
-        "SELECT DISTINCT f.file_path, f.file_name "
-        "FROM files f "
-        "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) "
-        "WHERE fts.content LIKE ? OR fts.file_name LIKE ?";
+    if (simpleLoaded_) {
+        // Simple tokenizer: 使用 FTS5 MATCH（自动分词）
+        emit logMessage("[FileIndexer] Using FTS5 MATCH with Simple tokenizer");
+        
+        sql = "SELECT DISTINCT f.file_path, f.file_name "
+              "FROM files f "
+              "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) "
+              "WHERE files_fts MATCH ? ";
+        
+        bindValues << query;  // Simple 会自动分词
+    } else {
+        // 降级到 LIKE 查询（中文兼容但性能差）
+        emit logMessage("[FileIndexer] Using LIKE search (Chinese-compatible, performance warning)");
+        
+        sql = "SELECT DISTINCT f.file_path, f.file_name "
+              "FROM files f "
+              "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) "
+              "WHERE fts.content LIKE ? OR fts.file_name LIKE ? ";
+        
+        QString likePattern = "%" + query + "%";
+        bindValues << likePattern << likePattern;
+    }
     
     // 添加文件类型过滤
     if (!fileTypes.isEmpty()) {
@@ -669,37 +795,42 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
         for (int i = 0; i < fileTypes.size(); ++i) {
             placeholders << "?";
         }
-        sql += " AND f.file_type IN (" + placeholders.join(", ") + ")";
+        sql += "AND f.file_type IN (" + placeholders.join(", ") + ") ";
+        bindValues << fileTypes;
     }
     
-    sql += " LIMIT 1000";
+    sql += "LIMIT 1000";
     
-    emit logMessage(QString("[FileIndexer] Using LIKE search (Chinese-compatible)"));
+    emit logMessage(QString("[FileIndexer] SQL: %1").arg(sql));
     
-    // LIKE 查询需要 % 通配符
-    QString likePattern = "%" + query + "%";
+    // 执行查询
+    sqlite3_stmt* stmt = nullptr;
+    if (!prepareStatement(sql, &stmt)) {
+        return QStringList();
+    }
     
-    sqlQuery.prepare(sql);
-    sqlQuery.addBindValue(likePattern);  // content LIKE
-    sqlQuery.addBindValue(likePattern);  // file_name LIKE
-    
-    for (const QString& type : fileTypes) {
-        sqlQuery.addBindValue(type);
+    // 绑定参数
+    for (int i = 0; i < bindValues.size(); ++i) {
+        sqlite3_bind_text(stmt, i + 1, bindValues[i].toUtf8().constData(), -1, SQLITE_TRANSIENT);
     }
     
     QStringList results;
-    if (sqlQuery.exec()) {
-        while (sqlQuery.next()) {
-            QString filePath = sqlQuery.value(0).toString();
-            QString fileName = sqlQuery.value(1).toString();
-            results << filePath;
-            emit logMessage(QString("[FileIndexer]   Found: %1").arg(fileName));
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char* filePath = sqlite3_column_text(stmt, 0);
+        const unsigned char* fileName = sqlite3_column_text(stmt, 1);
+        
+        if (filePath) {
+            results << QString::fromUtf8(reinterpret_cast<const char*>(filePath));
+            if (fileName) {
+                emit logMessage(QString("[FileIndexer]   Found: %1")
+                    .arg(QString::fromUtf8(reinterpret_cast<const char*>(fileName))));
+            }
         }
-        emit logMessage(QString("[FileIndexer] Search completed: %1 results").arg(results.size()));
-    } else {
-        emit logMessage(QString("[FileIndexer] Search query failed: %1").arg(sqlQuery.lastError().text()));
     }
     
+    finalizeStatement(stmt);
+    
+    emit logMessage(QString("[FileIndexer] Search completed: %1 results").arg(results.size()));
     return results;
 }
 
@@ -763,45 +894,77 @@ QStringList FileIndexer::searchWithBoolean(const QString& query, const QStringLi
     }
     
     // 构建 SQL 查询
-    QSqlQuery sqlQuery(db_);
-    QString sql = "SELECT DISTINCT f.file_path, f.file_name FROM files f "
-                  "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) WHERE ";
+    QString sql;
+    QStringList bindValues;
     
-    QStringList conditions;
-    QList<QString> bindValues;
-    
-    // AND 条件：所有词都必须出现
-    if (!andTerms.isEmpty()) {
-        QStringList andConditions;
-        for (const QString& term : andTerms) {
-            andConditions << "(fts.content LIKE ? OR fts.file_name LIKE ?)";
+    if (simpleLoaded_) {
+        // 使用 FTS5 MATCH（Simple tokenizer 支持）
+        emit logMessage("[FileIndexer] Using FTS5 MATCH for boolean search");
+        
+        // 构建 FTS5 查询字符串
+        QStringList ftsTerms;
+        
+        if (!andTerms.isEmpty()) {
+            ftsTerms << "(" + andTerms.join(" AND ") + ")";
+        }
+        
+        if (!orTerms.isEmpty()) {
+            ftsTerms << "(" + orTerms.join(" OR ") + ")";
+        }
+        
+        for (const QString& term : notTerms) {
+            ftsTerms << "NOT " + term;
+        }
+        
+        QString ftsQuery = ftsTerms.join(" AND ");
+        
+        sql = "SELECT DISTINCT f.file_path, f.file_name FROM files f "
+              "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) "
+              "WHERE files_fts MATCH ? ";
+        
+        bindValues << ftsQuery;
+    } else {
+        // 降级到 LIKE 查询
+        emit logMessage("[FileIndexer] Using LIKE for boolean search (performance warning)");
+        
+        sql = "SELECT DISTINCT f.file_path, f.file_name FROM files f "
+              "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) WHERE ";
+        
+        QStringList conditions;
+        
+        // AND 条件：所有词都必须出现
+        if (!andTerms.isEmpty()) {
+            QStringList andConditions;
+            for (const QString& term : andTerms) {
+                andConditions << "(fts.content LIKE ? OR fts.file_name LIKE ?)";
+                bindValues << ("%" + term + "%") << ("%" + term + "%");
+            }
+            conditions << "(" + andConditions.join(" AND ") + ")";
+        }
+        
+        // OR 条件：任一词出现即可
+        if (!orTerms.isEmpty()) {
+            QStringList orConditions;
+            for (const QString& term : orTerms) {
+                orConditions << "(fts.content LIKE ? OR fts.file_name LIKE ?)";
+                bindValues << ("%" + term + "%") << ("%" + term + "%");
+            }
+            conditions << "(" + orConditions.join(" OR ") + ")";
+        }
+        
+        // NOT 条件：不能包含这些词
+        for (const QString& term : notTerms) {
+            conditions << "(fts.content NOT LIKE ? AND fts.file_name NOT LIKE ?)";
             bindValues << ("%" + term + "%") << ("%" + term + "%");
         }
-        conditions << "(" + andConditions.join(" AND ") + ")";
-    }
-    
-    // OR 条件：任一词出现即可
-    if (!orTerms.isEmpty()) {
-        QStringList orConditions;
-        for (const QString& term : orTerms) {
-            orConditions << "(fts.content LIKE ? OR fts.file_name LIKE ?)";
-            bindValues << ("%" + term + "%") << ("%" + term + "%");
+        
+        if (conditions.isEmpty()) {
+            emit logMessage("[FileIndexer] No valid search terms found");
+            return QStringList();
         }
-        conditions << "(" + orConditions.join(" OR ") + ")";
+        
+        sql += conditions.join(" AND ");
     }
-    
-    // NOT 条件：不能包含这些词
-    for (const QString& term : notTerms) {
-        conditions << "(fts.content NOT LIKE ? AND fts.file_name NOT LIKE ?)";
-        bindValues << ("%" + term + "%") << ("%" + term + "%");
-    }
-    
-    if (conditions.isEmpty()) {
-        emit logMessage("[FileIndexer] No valid search terms found");
-        return QStringList();
-    }
-    
-    sql += conditions.join(" AND ");
     
     // 添加文件类型过滤
     if (!fileTypes.isEmpty()) {
@@ -810,33 +973,41 @@ QStringList FileIndexer::searchWithBoolean(const QString& query, const QStringLi
             placeholders << "?";
         }
         sql += " AND f.file_type IN (" + placeholders.join(", ") + ")";
+        bindValues << fileTypes;
     }
     
     sql += " LIMIT 1000";
     
     emit logMessage(QString("[FileIndexer] Boolean SQL: %1").arg(sql));
     
-    sqlQuery.prepare(sql);
-    for (const QString& value : bindValues) {
-        sqlQuery.addBindValue(value);
+    // 执行查询
+    sqlite3_stmt* stmt = nullptr;
+    if (!prepareStatement(sql, &stmt)) {
+        return QStringList();
     }
-    for (const QString& type : fileTypes) {
-        sqlQuery.addBindValue(type);
+    
+    // 绑定参数
+    for (int i = 0; i < bindValues.size(); ++i) {
+        sqlite3_bind_text(stmt, i + 1, bindValues[i].toUtf8().constData(), -1, SQLITE_TRANSIENT);
     }
     
     QStringList results;
-    if (sqlQuery.exec()) {
-        while (sqlQuery.next()) {
-            QString filePath = sqlQuery.value(0).toString();
-            QString fileName = sqlQuery.value(1).toString();
-            results << filePath;
-            emit logMessage(QString("[FileIndexer]   Found: %1").arg(fileName));
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char* filePath = sqlite3_column_text(stmt, 0);
+        const unsigned char* fileName = sqlite3_column_text(stmt, 1);
+        
+        if (filePath) {
+            results << QString::fromUtf8(reinterpret_cast<const char*>(filePath));
+            if (fileName) {
+                emit logMessage(QString("[FileIndexer]   Found: %1")
+                    .arg(QString::fromUtf8(reinterpret_cast<const char*>(fileName))));
+            }
         }
-        emit logMessage(QString("[FileIndexer] Boolean search completed: %1 results").arg(results.size()));
-    } else {
-        emit logMessage(QString("[FileIndexer] Boolean search failed: %1").arg(sqlQuery.lastError().text()));
     }
     
+    finalizeStatement(stmt);
+    
+    emit logMessage(QString("[FileIndexer] Boolean search completed: %1 results").arg(results.size()));
     return results;
 }
 
@@ -882,13 +1053,15 @@ IndexStats FileIndexer::getStats() {
     IndexStats stats = stats_;
     
     // 更新统计信息
-    QSqlQuery query(db_);
+    sqlite3_stmt* stmt = nullptr;
     
     // 文件总数
-    if (query.exec("SELECT COUNT(*) FROM files")) {
-        if (query.next()) {
-            stats.totalFiles = query.value(0).toInt();
+    const char* sql = "SELECT COUNT(*) FROM files";
+    if (prepareStatement(QString::fromUtf8(sql), &stmt)) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            stats.totalFiles = sqlite3_column_int(stmt, 0);
         }
+        finalizeStatement(stmt);
     }
     
     // 数据库大小
@@ -1010,17 +1183,24 @@ void FileIndexer::scanDirectory(const QString& dirPath) {
     }
     
     // 检查已索引的文件是否仍存在
-    QSqlQuery query(db_);
-    query.prepare("SELECT file_path FROM files WHERE file_path LIKE ?");
-    query.addBindValue(dirPath + "%");
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql = "SELECT file_path FROM files WHERE file_path LIKE ?";
     
-    if (query.exec()) {
-        while (query.next()) {
-            QString indexedPath = query.value(0).toString();
-            if (!currentFiles.contains(indexedPath)) {
-                removeFileFromIndex(indexedPath);
+    if (prepareStatement(QString::fromUtf8(sql), &stmt)) {
+        QString likePattern = dirPath + "%";
+        sqlite3_bind_text(stmt, 1, likePattern.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+        
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const unsigned char* indexedPath = sqlite3_column_text(stmt, 0);
+            if (indexedPath) {
+                QString pathStr = QString::fromUtf8(reinterpret_cast<const char*>(indexedPath));
+                if (!currentFiles.contains(pathStr)) {
+                    removeFileFromIndex(pathStr);
+                }
             }
         }
+        
+        finalizeStatement(stmt);
     }
 }
 

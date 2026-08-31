@@ -4,11 +4,14 @@
 #include <QString>
 #include <QStringList>
 #include <QDateTime>
-#include <QSqlDatabase>
 #include <QFileSystemWatcher>
 #include <QTimer>
 #include <QSet>
 #include <QMutex>
+
+// 使用 SQLite C API 而不是 Qt SQL
+struct sqlite3;  // 前向声明
+struct sqlite3_stmt;
 
 namespace CrossNetShare {
 
@@ -87,11 +90,21 @@ private slots:
     void processIndexQueue();
 
 private:
-    // 数据库操作
+    // 数据库操作 - 使用 SQLite C API
     bool initializeDatabase();
     bool createTables();
-    void loadSimpleExtension();
+    bool loadSimpleExtension();
     QString detectBestTokenizer();
+    
+    // SQLite C API 辅助函数
+    bool execSQL(const char* sql, QString* error = nullptr);
+    bool execSQL(const QString& sql, QString* error = nullptr);
+    QString escapeString(const QString& str) const;
+    qint64 getLastInsertId();
+    
+    // Prepared statement 辅助函数
+    bool prepareStatement(const QString& sql, sqlite3_stmt** stmt);
+    void finalizeStatement(sqlite3_stmt* stmt);
     
     // 文本提取
     QString extractText(const QString& filePath);
@@ -123,7 +136,7 @@ private:
 private:
     QString sharedPath_;                    // 共享目录路径
     QString dbPath_;                        // 数据库路径
-    QSqlDatabase db_;                       // 索引数据库
+    sqlite3* db_;                           // SQLite 数据库句柄（使用 C API）
     
     IndexConfig config_;                    // 索引配置
     IndexStats stats_;                      // 统计信息
@@ -137,6 +150,7 @@ private:
     
     bool isRunning_;                        // 是否正在运行
     bool isIndexing_;                       // 是否正在索引
+    bool simpleLoaded_;                     // Simple 扩展是否已加载
 };
 
 } // namespace CrossNetShare

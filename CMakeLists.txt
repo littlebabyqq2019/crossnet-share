@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(CrossNetShare VERSION 1.5.0 LANGUAGES CXX)
+project(CrossNetShare VERSION 2.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -156,12 +156,33 @@ target_link_libraries(CrossNetShareClient
     PRIVATE Qt5::Core
     PRIVATE Qt5::Widgets
     PRIVATE Qt5::Network
-    PRIVATE Qt5::Sql
     PRIVATE Qt5::Concurrent
 )
 
 # Windows特定设置
 if(WIN32)
+    # 使用独立的 SQLite C API（不依赖 Qt SQL）
+    # SQLite 文件将通过 GitHub Actions 在构建时下载
+    set(SQLITE3_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/sqlite")
+    set(SQLITE3_LIBRARY "${CMAKE_SOURCE_DIR}/third_party/sqlite/sqlite3.lib")
+    
+    if(EXISTS "${SQLITE3_INCLUDE_DIR}/sqlite3.h")
+        message(STATUS "Found SQLite headers: ${SQLITE3_INCLUDE_DIR}")
+        target_include_directories(CrossNetShareClient PRIVATE ${SQLITE3_INCLUDE_DIR})
+        
+        if(EXISTS "${SQLITE3_LIBRARY}")
+            message(STATUS "Found SQLite library: ${SQLITE3_LIBRARY}")
+            target_link_libraries(CrossNetShareClient PRIVATE ${SQLITE3_LIBRARY})
+        else()
+            message(WARNING "SQLite library not found at: ${SQLITE3_LIBRARY}")
+            message(WARNING "Build will continue but runtime may fail")
+        endif()
+    else()
+        message(WARNING "SQLite headers not found at: ${SQLITE3_INCLUDE_DIR}")
+        message(WARNING "Please download SQLite from https://www.sqlite.org/download.html")
+        message(WARNING "Build will continue but may fail")
+    endif()
+    
     target_link_libraries(CrossNetShareServer PRIVATE ws2_32)
     target_link_libraries(CrossNetShareClient PRIVATE ws2_32)
 
@@ -214,15 +235,20 @@ if(WIN32)
         COMMENT "Copying text extraction scripts..."
     )
     
-    # 复制SQLite驱动插件（客户端索引功能需要）
-    add_custom_command(TARGET CrossNetShareClient POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:CrossNetShareClient>/plugins/sqldrivers"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${QT_PLUGINS_DIR}/sqldrivers/qsqlite.dll"
-            "$<TARGET_FILE_DIR:CrossNetShareClient>/plugins/sqldrivers/"
-        COMMENT "Copying Qt SQL drivers..."
-    )
+    # 复制 SQLite DLL（用于内容搜索）
+    if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/sqlite/sqlite3.dll")
+        add_custom_command(TARGET CrossNetShareClient POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/third_party/sqlite/sqlite3.dll"
+                "$<TARGET_FILE_DIR:CrossNetShareClient>/sqlite3.dll"
+            COMMENT "Copying SQLite DLL..."
+        )
+    else()
+        message(WARNING "sqlite3.dll not found, client will fail to run content search")
+    endif()
+    
+    # 移除旧的 Qt SQL 驱动复制（不再需要）
+    # 现在使用独立的 SQLite 而不是 Qt SQL
     
     # 如果许可证文件存在，复制它
     if(EXISTS "${CMAKE_SOURCE_DIR}/Aspose.Words/python专用whl包/1.lic")
