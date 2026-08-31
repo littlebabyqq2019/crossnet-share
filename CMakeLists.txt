@@ -214,6 +214,16 @@ if(WIN32)
         COMMENT "Copying text extraction scripts..."
     )
     
+    # 复制SQLite驱动插件（客户端索引功能需要）
+    add_custom_command(TARGET CrossNetShareClient POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:CrossNetShareClient>/plugins/sqldrivers"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT_PLUGINS_DIR}/sqldrivers/qsqlite.dll"
+            "$<TARGET_FILE_DIR:CrossNetShareClient>/plugins/sqldrivers/"
+        COMMENT "Copying Qt SQL drivers..."
+    )
+    
     # 如果许可证文件存在，复制它
     if(EXISTS "${CMAKE_SOURCE_DIR}/Aspose.Words/python专用whl包/1.lic")
         add_custom_command(TARGET CrossNetShareServer POST_BUILD
