@@ -329,9 +329,11 @@ void FileIndexer::indexFile(const QString& filePath) {
     // 提取文本内容
     QString content = extractText(filePath);
     if (content.isEmpty()) {
-        qDebug() << "No content extracted from:" << filePath;
+        emit logMessage(QString("[FileIndexer] No content extracted from: %1").arg(filePath));
         return;
     }
+    
+    emit logMessage(QString("[FileIndexer] Extracted %1 characters from: %2").arg(content.length()).arg(QFileInfo(filePath).fileName()));
     
     // 限制内容大小
     if (content.length() > config_.maxContentChars) {
@@ -479,14 +481,14 @@ QString FileIndexer::extractTextFromPdf(const QString& filePath) {
     }
     
     if (python.isEmpty()) {
-        qWarning() << "Python not found, cannot extract PDF text";
+        emit logMessage("[FileIndexer] Python not found, cannot extract PDF text");
         return QString();
     }
     
     // 查找提取脚本
     QString scriptPath = QCoreApplication::applicationDirPath() + "/extract_pdf_text.py";
     if (!QFileInfo::exists(scriptPath)) {
-        qWarning() << "PDF extraction script not found:" << scriptPath;
+        emit logMessage(QString("[FileIndexer] PDF extraction script not found: %1").arg(scriptPath));
         return QString();
     }
     
@@ -495,19 +497,19 @@ QString FileIndexer::extractTextFromPdf(const QString& filePath) {
     process.start(python, QStringList() << scriptPath << filePath);
     
     if (!process.waitForStarted(10000)) {
-        qWarning() << "Failed to start PDF extraction:" << process.errorString();
+        emit logMessage(QString("[FileIndexer] Failed to start PDF extraction: %1").arg(process.errorString()));
         return QString();
     }
     
     if (!process.waitForFinished(60000)) {
         process.kill();
-        qWarning() << "PDF extraction timed out:" << filePath;
+        emit logMessage(QString("[FileIndexer] PDF extraction timed out: %1").arg(filePath));
         return QString();
     }
     
     if (process.exitCode() != 0) {
         QString error = QString::fromLocal8Bit(process.readAllStandardError());
-        qWarning() << "PDF extraction failed:" << error;
+        emit logMessage(QString("[FileIndexer] PDF extraction failed: %1").arg(error));
         return QString();
     }
     
@@ -516,7 +518,7 @@ QString FileIndexer::extractTextFromPdf(const QString& filePath) {
     // 输出调试信息
     QString stderr_output = QString::fromLocal8Bit(process.readAllStandardError());
     if (!stderr_output.isEmpty()) {
-        qDebug() << "PDF extraction output:" << stderr_output;
+        emit logMessage(QString("[FileIndexer] PDF extraction output: %1").arg(stderr_output));
     }
     
     return text;
@@ -530,14 +532,14 @@ QString FileIndexer::extractTextFromWord(const QString& filePath) {
     }
     
     if (python.isEmpty()) {
-        qWarning() << "Python not found, cannot extract Word text";
+        emit logMessage("[FileIndexer] Python not found, cannot extract Word text");
         return QString();
     }
     
     // 查找提取脚本
     QString scriptPath = QCoreApplication::applicationDirPath() + "/extract_word_text.py";
     if (!QFileInfo::exists(scriptPath)) {
-        qWarning() << "Word extraction script not found:" << scriptPath;
+        emit logMessage(QString("[FileIndexer] Word extraction script not found: %1").arg(scriptPath));
         return QString();
     }
     
@@ -546,19 +548,19 @@ QString FileIndexer::extractTextFromWord(const QString& filePath) {
     process.start(python, QStringList() << scriptPath << filePath);
     
     if (!process.waitForStarted(10000)) {
-        qWarning() << "Failed to start Word extraction:" << process.errorString();
+        emit logMessage(QString("[FileIndexer] Failed to start Word extraction: %1").arg(process.errorString()));
         return QString();
     }
     
     if (!process.waitForFinished(60000)) {
         process.kill();
-        qWarning() << "Word extraction timed out:" << filePath;
+        emit logMessage(QString("[FileIndexer] Word extraction timed out: %1").arg(filePath));
         return QString();
     }
     
     if (process.exitCode() != 0) {
         QString error = QString::fromLocal8Bit(process.readAllStandardError());
-        qWarning() << "Word extraction failed:" << error;
+        emit logMessage(QString("[FileIndexer] Word extraction failed: %1").arg(error));
         return QString();
     }
     
@@ -567,7 +569,7 @@ QString FileIndexer::extractTextFromWord(const QString& filePath) {
     // 输出调试信息
     QString stderr_output = QString::fromLocal8Bit(process.readAllStandardError());
     if (!stderr_output.isEmpty()) {
-        qDebug() << "Word extraction output:" << stderr_output;
+        emit logMessage(QString("[FileIndexer] Word extraction output: %1").arg(stderr_output));
     }
     
     return text;
