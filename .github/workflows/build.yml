@@ -89,11 +89,11 @@ jobs:
         # 复制 Simple 扩展到客户端目录
         Write-Host "Copying Simple FTS5 extension..."
         
-        # 尝试多个可能的路径
+        # 尝试多个可能的路径（根据实际构建结果）
         $simplePaths = @(
+          "../../../third_party/simple/build/src/Release/simple.dll",
           "../../../third_party/simple/build/Release/simple.dll",
-          "../../../third_party/simple/build/libsimple/Release/simple.dll",
-          "../../../third_party/simple/build/simple.dll"
+          "../../../third_party/simple/build/libsimple/Release/simple.dll"
         )
         
         $simpleCopied = $false
@@ -109,6 +109,10 @@ jobs:
         if (-not $simpleCopied) {
           Write-Host "⚠ Warning: simple.dll not found, client will fall back to unicode61 tokenizer"
           Write-Host "   Chinese search may not work optimally"
+          Write-Host "Searched paths:"
+          foreach ($path in $simplePaths) {
+            Write-Host "  - $path"
+          }
         }
         
         # 复制 jieba 词典文件（如果存在）
