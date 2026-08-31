@@ -586,6 +586,21 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
     
     emit logMessage(QString("[FileIndexer] Searching for: '%1' (FTS query: '%2')").arg(query).arg(ftsQuery));
     
+    // 先测试：检查 FTS 表中有多少条记录
+    QSqlQuery testQuery(db_);
+    testQuery.exec("SELECT COUNT(*) FROM files_fts");
+    if (testQuery.next()) {
+        int ftsCount = testQuery.value(0).toInt();
+        emit logMessage(QString("[FileIndexer] FTS table has %1 records").arg(ftsCount));
+    }
+    
+    // 测试：尝试获取 FTS 表的前几条 file_id
+    testQuery.exec("SELECT file_id FROM files_fts LIMIT 3");
+    emit logMessage("[FileIndexer] Sample file_ids in FTS table:");
+    while (testQuery.next()) {
+        emit logMessage(QString("  - file_id: %1").arg(testQuery.value(0).toString()));
+    }
+    
     QSqlQuery sqlQuery(db_);
     
     // FTS5 表使用 rowid，不能用 file_id JOIN
