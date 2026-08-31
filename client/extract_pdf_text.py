@@ -106,9 +106,11 @@ def main():
     try:
         text = extract_text(pdf_path)
         
-        # 输出到stdout，让C++程序读取
+        # 输出到stdout，强制使用 UTF-8 编码
         if text:
-            print(text)
+            # 在 Windows 上需要确保输出是 UTF-8
+            # 使用 buffer.write 避免编码问题
+            sys.stdout.buffer.write(text.encode('utf-8'))
             return 0
         else:
             return 1
