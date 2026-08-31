@@ -35,6 +35,11 @@ jobs:
     - name: Setup MSVC
       uses: microsoft/setup-msbuild@v2
 
+    - name: Setup MSVC Dev Environment
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
     - name: Download SQLite
       run: |
         echo "Downloading SQLite for independent FTS5 support..."
