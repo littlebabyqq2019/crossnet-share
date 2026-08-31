@@ -70,8 +70,11 @@ jobs:
         # 复制客户端
         Copy-Item build/bin/Release/CrossNetShareClient.exe CrossNetShare-Release/Client/
         Copy-Item build/bin/Release/*.dll CrossNetShare-Release/Client/ -ErrorAction SilentlyContinue
+        Copy-Item build/bin/Release/*.py CrossNetShare-Release/Client/ -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/platforms CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
         Copy-Item build/bin/Release/styles CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
+        Copy-Item build/bin/Release/plugins CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
+        Copy-Item build/bin/Release/sqldrivers CrossNetShare-Release/Client/ -Recurse -ErrorAction SilentlyContinue
 
         # 复制文档
         Copy-Item README.md CrossNetShare-Release/
