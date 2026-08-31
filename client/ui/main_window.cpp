@@ -15,6 +15,9 @@
 #include <QCoreApplication>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QMenuBar>
+#include <QMenu>
+#include <QtConcurrent>
 
 namespace CrossNetShare {
 
@@ -633,8 +636,6 @@ void MainWindow::onAutoStartChanged(int state) {
     }
 }
 
-}
-
 // ============================================================================
 // 索引器集成方法
 // ============================================================================
@@ -805,3 +806,5 @@ void MainWindow::performContentSearch(const QString& query) {
     });
 }
 
+
+}  // namespace CrossNetShare

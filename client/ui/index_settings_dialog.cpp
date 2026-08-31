@@ -4,6 +4,7 @@
 #include <QGroupBox>
 #include <QFormLayout>
 #include <QMessageBox>
+#include <QScrollBar>
 #include <QTimer>
 
 namespace CrossNetShare {
