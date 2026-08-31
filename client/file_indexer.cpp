@@ -51,6 +51,10 @@ FileIndexer::~FileIndexer() {
 }
 
 bool FileIndexer::initialize(const QString& sharedPath, const QString& dbPath) {
+    qDebug() << "==========================================================";
+    qDebug() << "=== FileIndexer::initialize() CALLED ===";
+    qDebug() << "==========================================================";
+    
     sharedPath_ = sharedPath;
     dbPath_ = dbPath;
     

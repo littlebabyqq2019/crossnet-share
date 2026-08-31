@@ -685,6 +685,8 @@ void MainWindow::setupMenuBar() {
 }
 
 void MainWindow::initializeIndexer() {
+    onLogMessage("=== DEBUG: initializeIndexer() called ===");
+    
     QString sharePath = client_->getSharePath();
     
     onLogMessage(QString("Attempting to initialize indexer with path: %1").arg(sharePath));
@@ -695,7 +697,9 @@ void MainWindow::initializeIndexer() {
     }
     
     // 创建索引器
+    onLogMessage("=== DEBUG: Creating FileIndexer object ===");
     indexer_ = new FileIndexer(this);
+    onLogMessage("=== DEBUG: FileIndexer object created ===");
     
     // 设置索引数据库路径
     QString appDataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -705,7 +709,9 @@ void MainWindow::initializeIndexer() {
     onLogMessage(QString("Database path: %1").arg(dbPath));
     onLogMessage(QString("App data path exists: %1").arg(QDir(appDataPath).exists() ? "yes" : "no"));
     
+    onLogMessage("=== DEBUG: About to call indexer_->initialize() ===");
     if (!indexer_->initialize(sharePath, dbPath)) {
+        onLogMessage("=== DEBUG: indexer_->initialize() returned FALSE ===");
         onLogMessage("Failed to initialize content indexer - check database permissions and SQLite driver");
         delete indexer_;
         indexer_ = nullptr;
