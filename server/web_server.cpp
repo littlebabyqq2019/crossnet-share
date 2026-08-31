@@ -1297,9 +1297,6 @@ void WebServer::processWatermarkGeneration(QTcpSocket* socket, const QString& te
         .arg(username, filePath, QString::number(watermarkResult.generatedFiles.size())));
 }
 
-}
-
-
 void WebServer::handleContentSearch(QTcpSocket* socket, const HttpRequest& request) {
     // 检查认证
     QString username;
@@ -1364,3 +1361,5 @@ void WebServer::handleContentSearch(QTcpSocket* socket, const HttpRequest& reque
     emit logMessage(QString("[HTTP] Content search request (client-only feature): %1")
         .arg(QString::fromStdString(query)));
 }
+
+}  // namespace CrossNetShare

@@ -596,7 +596,7 @@ QString FileIndexer::buildFTS5Query(const QString& userQuery) const {
     return query;
 }
 
-IndexStats FileIndexer::getStats() const {
+IndexStats FileIndexer::getStats() {
     IndexStats stats = stats_;
     
     // 更新统计信息

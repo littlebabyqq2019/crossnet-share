@@ -700,8 +700,8 @@ void MainWindow::initializeIndexer() {
     IndexConfig config;
     config.enabled = true;
     config.realtimeMonitoring = true;
-    config.includedExtensions = {"txt", "pdf", "doc", "docx"};
-    config.excludedPatterns = {"~$*", "*.tmp", "temp/*"};
+    config.includedExtensions = QStringList{"txt", "pdf", "doc", "docx"};
+    config.excludedPatterns = QStringList{"~$*", "*.tmp", "temp/*"};
     config.maxFileSizeMB = 50;
     config.scanIntervalMinutes = 60;
     

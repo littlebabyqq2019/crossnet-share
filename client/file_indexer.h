@@ -67,7 +67,7 @@ public:
     QStringList search(const QString& query, const QStringList& fileTypes = QStringList());
     
     // 统计信息
-    IndexStats getStats() const;
+    IndexStats getStats();
     
     // 是否应该索引该文件
     bool shouldIndexFile(const QString& filePath) const;
