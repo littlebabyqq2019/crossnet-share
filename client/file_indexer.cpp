@@ -645,80 +645,17 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
         return QStringList();
     }
     
-    QString ftsQuery = buildFTS5Query(query);
+    emit logMessage(QString("[FileIndexer] Searching for: '%1'").arg(query));
     
-    emit logMessage(QString("[FileIndexer] Searching for: '%1' (FTS query: '%2')").arg(query).arg(ftsQuery));
-    
-    // 先测试：检查 FTS 表中有多少条记录
-    QSqlQuery testQuery(db_);
-    testQuery.exec("SELECT COUNT(*) FROM files_fts");
-    if (testQuery.next()) {
-        int ftsCount = testQuery.value(0).toInt();
-        emit logMessage(QString("[FileIndexer] FTS table has %1 records").arg(ftsCount));
-    }
-    
-    // 测试：尝试获取 FTS 表的前几条 file_id
-    testQuery.exec("SELECT file_id FROM files_fts LIMIT 3");
-    emit logMessage("[FileIndexer] Sample file_ids in FTS table:");
-    while (testQuery.next()) {
-        emit logMessage(QString("  - file_id: %1").arg(testQuery.value(0).toString()));
-    }
-    
-    // 测试：尝试搜索任意内容（使用 * 通配符）
-    testQuery.prepare("SELECT file_id FROM files_fts WHERE files_fts MATCH ? LIMIT 3");
-    testQuery.addBindValue("*");  // 搜索所有
-    if (testQuery.exec()) {
-        int matchCount = 0;
-        while (testQuery.next()) {
-            matchCount++;
-        }
-        emit logMessage(QString("[FileIndexer] Test MATCH '*' found %1 records").arg(matchCount));
-    }
-    
-    // 测试：搜索文件名中的内容
-    testQuery.prepare("SELECT file_id, file_name FROM files_fts WHERE file_name MATCH ? LIMIT 3");
-    testQuery.addBindValue("txt");
-    if (testQuery.exec()) {
-        emit logMessage("[FileIndexer] Test searching 'txt' in file_name:");
-        while (testQuery.next()) {
-            emit logMessage(QString("  - Found: %1").arg(testQuery.value(1).toString()));
-        }
-    }
-    
-    // 关键测试：检查 content 字段是否有数据
-    testQuery.exec("SELECT LENGTH(content) as len, file_name FROM files_fts LIMIT 3");
-    emit logMessage("[FileIndexer] Checking content field lengths:");
-    while (testQuery.next()) {
-        emit logMessage(QString("  - %1: %2 characters").arg(testQuery.value(1).toString()).arg(testQuery.value(0).toInt()));
-    }
-    
-    // 直接测试 FTS MATCH 是否工作
-    testQuery.prepare("SELECT file_id, file_name FROM files_fts WHERE content MATCH ? LIMIT 3");
-    testQuery.addBindValue(ftsQuery);
-    emit logMessage(QString("[FileIndexer] Direct FTS MATCH test with query: %1").arg(ftsQuery));
-    if (testQuery.exec()) {
-        int directMatchCount = 0;
-        while (testQuery.next()) {
-            directMatchCount++;
-            emit logMessage(QString("  - Direct match found: %1 (ID: %2)").arg(testQuery.value(1).toString()).arg(testQuery.value(0).toString()));
-        }
-        if (directMatchCount == 0) {
-            emit logMessage("  - Direct FTS MATCH returned 0 results");
-        }
-    } else {
-        emit logMessage(QString("  - Direct FTS MATCH failed: %1").arg(testQuery.lastError().text()));
-    }
-    
+    // 使用 LIKE 查询而不是 FTS MATCH（因为 Simple 扩展无法加载）
+    // LIKE 查询完全支持中文，但性能较慢（文件量小时可接受）
     QSqlQuery sqlQuery(db_);
     
-    // FTS5 表使用 rowid，不能用 file_id JOIN
-    // 我们需要先从 FTS 表搜索，然后用 file_id 关联 files 表
     QString sql = 
-        "SELECT DISTINCT f.file_path "
+        "SELECT DISTINCT f.file_path, f.file_name "
         "FROM files f "
-        "WHERE f.file_id IN ("
-        "  SELECT CAST(file_id AS INTEGER) FROM files_fts WHERE files_fts MATCH ?"
-        ")";
+        "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) "
+        "WHERE fts.content LIKE ? OR fts.file_name LIKE ?";
     
     // 添加文件类型过滤
     if (!fileTypes.isEmpty()) {
@@ -731,10 +668,15 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
     
     sql += " LIMIT 1000";
     
+    emit logMessage(QString("[FileIndexer] Using LIKE search (Chinese-compatible)"));
     emit logMessage(QString("[FileIndexer] SQL: %1").arg(sql));
     
+    // LIKE 查询需要 % 通配符
+    QString likePattern = "%" + query + "%";
+    
     sqlQuery.prepare(sql);
-    sqlQuery.addBindValue(ftsQuery);
+    sqlQuery.addBindValue(likePattern);  // content LIKE
+    sqlQuery.addBindValue(likePattern);  // file_name LIKE
     
     for (const QString& type : fileTypes) {
         sqlQuery.addBindValue(type);
@@ -743,9 +685,12 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
     QStringList results;
     if (sqlQuery.exec()) {
         while (sqlQuery.next()) {
-            results << sqlQuery.value(0).toString();
+            QString filePath = sqlQuery.value(0).toString();
+            QString fileName = sqlQuery.value(1).toString();
+            results << filePath;
+            emit logMessage(QString("[FileIndexer]   Found: %1").arg(fileName));
         }
-        emit logMessage(QString("[FileIndexer] Search found %1 results").arg(results.size()));
+        emit logMessage(QString("[FileIndexer] Search completed: %1 results").arg(results.size()));
     } else {
         emit logMessage(QString("[FileIndexer] Search query failed: %1").arg(sqlQuery.lastError().text()));
     }
