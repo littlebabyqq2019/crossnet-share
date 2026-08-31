@@ -78,6 +78,7 @@ signals:
     void indexingFinished();
     void indexingError(const QString& error);
     void fileIndexed(const QString& filePath);
+    void logMessage(const QString& message);  // 新增：通用日志信号
 
 private slots:
     void onFileChanged(const QString& path);

@@ -701,6 +701,9 @@ void MainWindow::initializeIndexer() {
     indexer_ = new FileIndexer(this);
     onLogMessage("=== DEBUG: FileIndexer object created ===");
     
+    // 立即连接日志信号，以便初始化过程中的日志能被接收
+    connect(indexer_, &FileIndexer::logMessage, this, &MainWindow::onLogMessage);
+    
     // 设置索引数据库路径
     QString appDataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(appDataPath);
@@ -729,7 +732,7 @@ void MainWindow::initializeIndexer() {
     
     indexer_->setConfig(config);
     
-    // 连接信号
+    // 连接其他信号（日志信号已经在创建对象后立即连接）
     connect(indexer_, &FileIndexer::indexingStarted, [this]() {
         onLogMessage("Content indexing started...");
     });

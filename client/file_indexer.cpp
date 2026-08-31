@@ -51,57 +51,57 @@ FileIndexer::~FileIndexer() {
 }
 
 bool FileIndexer::initialize(const QString& sharedPath, const QString& dbPath) {
-    qDebug() << "==========================================================";
-    qDebug() << "=== FileIndexer::initialize() CALLED ===";
-    qDebug() << "==========================================================";
+    emit logMessage("==========================================================");
+    emit logMessage("=== FileIndexer::initialize() CALLED ===");
+    emit logMessage("==========================================================");
     
     sharedPath_ = sharedPath;
     dbPath_ = dbPath;
     
-    qDebug() << "[FileIndexer] Initializing with shared path:" << sharedPath;
-    qDebug() << "[FileIndexer] Database path:" << dbPath;
+    emit logMessage(QString("[FileIndexer] Initializing with shared path: %1").arg(sharedPath));
+    emit logMessage(QString("[FileIndexer] Database path: %1").arg(dbPath));
     
     if (!initializeDatabase()) {
-        qWarning() << "[FileIndexer] Failed to initialize index database";
+        emit logMessage("[FileIndexer] Failed to initialize index database");
         return false;
     }
     
-    qDebug() << "[FileIndexer] Successfully initialized for path:" << sharedPath_;
+    emit logMessage(QString("[FileIndexer] Successfully initialized for path: %1").arg(sharedPath_));
     return true;
 }
 
 bool FileIndexer::initializeDatabase() {
-    qDebug() << "[FileIndexer] Checking for existing database connection...";
+    emit logMessage("[FileIndexer] Checking for existing database connection...");
     
     // 如果已经有连接，先移除
     if (QSqlDatabase::contains("index_db")) {
-        qDebug() << "[FileIndexer] Removing existing database connection";
+        emit logMessage("[FileIndexer] Removing existing database connection");
         QSqlDatabase::removeDatabase("index_db");
     }
     
-    qDebug() << "[FileIndexer] Creating new database connection";
-    qDebug() << "[FileIndexer] Available SQL drivers:" << QSqlDatabase::drivers();
+    emit logMessage("[FileIndexer] Creating new database connection");
+    emit logMessage(QString("[FileIndexer] Available SQL drivers: %1").arg(QSqlDatabase::drivers().join(", ")));
     
     // 创建数据库连接
     db_ = QSqlDatabase::addDatabase("QSQLITE", "index_db");
     db_.setDatabaseName(dbPath_);
     
-    qDebug() << "[FileIndexer] Opening database:" << dbPath_;
+    emit logMessage(QString("[FileIndexer] Opening database: %1").arg(dbPath_));
     
     if (!db_.open()) {
-        qWarning() << "[FileIndexer] Failed to open index database:" << db_.lastError().text();
-        qWarning() << "[FileIndexer] Database path:" << dbPath_;
-        qWarning() << "[FileIndexer] Database driver valid:" << db_.driver();
+        emit logMessage(QString("[FileIndexer] Failed to open index database: %1").arg(db_.lastError().text()));
+        emit logMessage(QString("[FileIndexer] Database path: %1").arg(dbPath_));
+        emit logMessage(QString("[FileIndexer] Database driver valid: %1").arg(db_.driver() ? "yes" : "no"));
         return false;
     }
     
-    qDebug() << "[FileIndexer] Database opened successfully, creating tables...";
+    emit logMessage("[FileIndexer] Database opened successfully, creating tables...");
     
     bool tablesCreated = createTables();
     if (!tablesCreated) {
-        qWarning() << "[FileIndexer] Failed to create tables";
+        emit logMessage("[FileIndexer] Failed to create tables");
     } else {
-        qDebug() << "[FileIndexer] Tables created successfully";
+        emit logMessage("[FileIndexer] Tables created successfully");
     }
     
     return tablesCreated;
@@ -110,7 +110,7 @@ bool FileIndexer::initializeDatabase() {
 bool FileIndexer::createTables() {
     QSqlQuery query(db_);
     
-    qDebug() << "[FileIndexer] Creating files table...";
+    emit logMessage("[FileIndexer] Creating files table...");
     
     // 创建文件元数据表
     if (!query.exec(
@@ -125,11 +125,11 @@ bool FileIndexer::createTables() {
         "  content_hash TEXT"
         ")"
     )) {
-        qWarning() << "[FileIndexer] Failed to create files table:" << query.lastError().text();
+        emit logMessage(QString("[FileIndexer] Failed to create files table: %1").arg(query.lastError().text()));
         return false;
     }
     
-    qDebug() << "[FileIndexer] Files table created, creating FTS5 table...";
+    emit logMessage("[FileIndexer] Files table created, creating FTS5 table...");
     
     // 创建 FTS5 全文搜索表
     if (!query.exec(
@@ -140,13 +140,13 @@ bool FileIndexer::createTables() {
         "  tokenize='unicode61 remove_diacritics 2'"
         ")"
     )) {
-        qWarning() << "[FileIndexer] Failed to create FTS5 table:" << query.lastError().text();
-        qWarning() << "[FileIndexer] This may indicate FTS5 is not available in your SQLite build";
-        qWarning() << "[FileIndexer] Try checking SQLite version and FTS5 support";
+        emit logMessage(QString("[FileIndexer] Failed to create FTS5 table: %1").arg(query.lastError().text()));
+        emit logMessage("[FileIndexer] This may indicate FTS5 is not available in your SQLite build");
+        emit logMessage("[FileIndexer] Try checking SQLite version and FTS5 support");
         return false;
     }
     
-    qDebug() << "[FileIndexer] FTS5 table created, creating config table...";
+    emit logMessage("[FileIndexer] FTS5 table created, creating config table...");
     
     // 创建配置表
     if (!query.exec(
@@ -155,7 +155,7 @@ bool FileIndexer::createTables() {
         "  value TEXT"
         ")"
     )) {
-        qWarning() << "Failed to create config table:" << query.lastError().text();
+        emit logMessage(QString("[FileIndexer] Failed to create config table: %1").arg(query.lastError().text()));
         return false;
     }
     
@@ -163,7 +163,7 @@ bool FileIndexer::createTables() {
     query.exec("CREATE INDEX IF NOT EXISTS idx_file_path ON files(file_path)");
     query.exec("CREATE INDEX IF NOT EXISTS idx_file_type ON files(file_type)");
     
-    qDebug() << "Index database tables created successfully";
+    emit logMessage("[FileIndexer] Index database tables created successfully");
     return true;
 }
 
