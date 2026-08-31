@@ -1078,6 +1078,81 @@ QStringList FileIndexer::searchWithBoolean(const QString& query, const QStringLi
     finalizeStatement(stmt);
     
     emit logMessage(QString("[FileIndexer] Boolean search completed: %1 results").arg(results.size()));
+    
+    // 如果 FTS5 MATCH 没有结果但使用了 Simple tokenizer，尝试降级到 LIKE
+    if (results.isEmpty() && simpleLoaded_) {
+        emit logMessage("[FileIndexer] FTS5 boolean search returned no results, trying LIKE fallback...");
+        
+        QString likeSql = "SELECT DISTINCT f.file_path, f.file_name FROM files f "
+                         "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) WHERE ";
+        
+        QStringList likeConditions;
+        QStringList likeBindValues;
+        
+        // AND 条件
+        if (!andTerms.isEmpty()) {
+            QStringList andConditions;
+            for (const QString& term : andTerms) {
+                andConditions << "(fts.content LIKE ? OR fts.file_name LIKE ?)";
+                likeBindValues << ("%" + term + "%") << ("%" + term + "%");
+            }
+            likeConditions << "(" + andConditions.join(" AND ") + ")";
+        }
+        
+        // OR 条件
+        if (!orTerms.isEmpty()) {
+            QStringList orConditions;
+            for (const QString& term : orTerms) {
+                orConditions << "(fts.content LIKE ? OR fts.file_name LIKE ?)";
+                likeBindValues << ("%" + term + "%") << ("%" + term + "%");
+            }
+            likeConditions << "(" + orConditions.join(" OR ") + ")";
+        }
+        
+        // NOT 条件
+        for (const QString& term : notTerms) {
+            likeConditions << "(fts.content NOT LIKE ? AND fts.file_name NOT LIKE ?)";
+            likeBindValues << ("%" + term + "%") << ("%" + term + "%");
+        }
+        
+        if (!likeConditions.isEmpty()) {
+            likeSql += likeConditions.join(" AND ");
+            
+            if (!fileTypes.isEmpty()) {
+                QStringList placeholders;
+                for (int i = 0; i < fileTypes.size(); ++i) {
+                    placeholders << "?";
+                }
+                likeSql += " AND f.file_type IN (" + placeholders.join(", ") + ")";
+                likeBindValues << fileTypes;
+            }
+            
+            likeSql += " LIMIT 1000";
+            
+            if (prepareStatement(likeSql, &stmt)) {
+                for (int i = 0; i < likeBindValues.size(); ++i) {
+                    sqlite3_bind_text(stmt, i + 1, likeBindValues[i].toUtf8().constData(), -1, SQLITE_TRANSIENT);
+                }
+                
+                while (sqlite3_step(stmt) == SQLITE_ROW) {
+                    const unsigned char* filePath = sqlite3_column_text(stmt, 0);
+                    const unsigned char* fileName = sqlite3_column_text(stmt, 1);
+                    
+                    if (filePath) {
+                        results << QString::fromUtf8(reinterpret_cast<const char*>(filePath));
+                        if (fileName) {
+                            emit logMessage(QString("[FileIndexer]   Found (LIKE): %1")
+                                .arg(QString::fromUtf8(reinterpret_cast<const char*>(fileName))));
+                        }
+                    }
+                }
+                
+                finalizeStatement(stmt);
+                emit logMessage(QString("[FileIndexer] LIKE boolean fallback completed: %1 results").arg(results.size()));
+            }
+        }
+    }
+    
     return results;
 }
 
