@@ -629,6 +629,23 @@ QStringList FileIndexer::search(const QString& query, const QStringList& fileTyp
         emit logMessage(QString("  - %1: %2 characters").arg(testQuery.value(1).toString()).arg(testQuery.value(0).toInt()));
     }
     
+    // 直接测试 FTS MATCH 是否工作
+    testQuery.prepare("SELECT file_id, file_name FROM files_fts WHERE content MATCH ? LIMIT 3");
+    testQuery.addBindValue(ftsQuery);
+    emit logMessage(QString("[FileIndexer] Direct FTS MATCH test with query: %1").arg(ftsQuery));
+    if (testQuery.exec()) {
+        int directMatchCount = 0;
+        while (testQuery.next()) {
+            directMatchCount++;
+            emit logMessage(QString("  - Direct match found: %1 (ID: %2)").arg(testQuery.value(1).toString()).arg(testQuery.value(0).toString()));
+        }
+        if (directMatchCount == 0) {
+            emit logMessage("  - Direct FTS MATCH returned 0 results");
+        }
+    } else {
+        emit logMessage(QString("  - Direct FTS MATCH failed: %1").arg(testQuery.lastError().text()));
+    }
+    
     QSqlQuery sqlQuery(db_);
     
     // FTS5 表使用 rowid，不能用 file_id JOIN
