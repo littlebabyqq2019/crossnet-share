@@ -54,35 +54,59 @@ bool FileIndexer::initialize(const QString& sharedPath, const QString& dbPath) {
     sharedPath_ = sharedPath;
     dbPath_ = dbPath;
     
+    qDebug() << "[FileIndexer] Initializing with shared path:" << sharedPath;
+    qDebug() << "[FileIndexer] Database path:" << dbPath;
+    
     if (!initializeDatabase()) {
-        qWarning() << "Failed to initialize index database";
+        qWarning() << "[FileIndexer] Failed to initialize index database";
         return false;
     }
     
-    qDebug() << "FileIndexer initialized for path:" << sharedPath_;
+    qDebug() << "[FileIndexer] Successfully initialized for path:" << sharedPath_;
     return true;
 }
 
 bool FileIndexer::initializeDatabase() {
+    qDebug() << "[FileIndexer] Checking for existing database connection...";
+    
     // 如果已经有连接，先移除
     if (QSqlDatabase::contains("index_db")) {
+        qDebug() << "[FileIndexer] Removing existing database connection";
         QSqlDatabase::removeDatabase("index_db");
     }
+    
+    qDebug() << "[FileIndexer] Creating new database connection";
+    qDebug() << "[FileIndexer] Available SQL drivers:" << QSqlDatabase::drivers();
     
     // 创建数据库连接
     db_ = QSqlDatabase::addDatabase("QSQLITE", "index_db");
     db_.setDatabaseName(dbPath_);
     
+    qDebug() << "[FileIndexer] Opening database:" << dbPath_;
+    
     if (!db_.open()) {
-        qWarning() << "Failed to open index database:" << db_.lastError().text();
+        qWarning() << "[FileIndexer] Failed to open index database:" << db_.lastError().text();
+        qWarning() << "[FileIndexer] Database path:" << dbPath_;
+        qWarning() << "[FileIndexer] Database driver valid:" << db_.driver();
         return false;
     }
     
-    return createTables();
+    qDebug() << "[FileIndexer] Database opened successfully, creating tables...";
+    
+    bool tablesCreated = createTables();
+    if (!tablesCreated) {
+        qWarning() << "[FileIndexer] Failed to create tables";
+    } else {
+        qDebug() << "[FileIndexer] Tables created successfully";
+    }
+    
+    return tablesCreated;
 }
 
 bool FileIndexer::createTables() {
     QSqlQuery query(db_);
+    
+    qDebug() << "[FileIndexer] Creating files table...";
     
     // 创建文件元数据表
     if (!query.exec(
@@ -97,9 +121,11 @@ bool FileIndexer::createTables() {
         "  content_hash TEXT"
         ")"
     )) {
-        qWarning() << "Failed to create files table:" << query.lastError().text();
+        qWarning() << "[FileIndexer] Failed to create files table:" << query.lastError().text();
         return false;
     }
+    
+    qDebug() << "[FileIndexer] Files table created, creating FTS5 table...";
     
     // 创建 FTS5 全文搜索表
     if (!query.exec(
@@ -110,9 +136,13 @@ bool FileIndexer::createTables() {
         "  tokenize='unicode61 remove_diacritics 2'"
         ")"
     )) {
-        qWarning() << "Failed to create FTS5 table:" << query.lastError().text();
+        qWarning() << "[FileIndexer] Failed to create FTS5 table:" << query.lastError().text();
+        qWarning() << "[FileIndexer] This may indicate FTS5 is not available in your SQLite build";
+        qWarning() << "[FileIndexer] Try checking SQLite version and FTS5 support";
         return false;
     }
+    
+    qDebug() << "[FileIndexer] FTS5 table created, creating config table...";
     
     // 创建配置表
     if (!query.exec(

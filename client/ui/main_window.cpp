@@ -687,6 +687,8 @@ void MainWindow::setupMenuBar() {
 void MainWindow::initializeIndexer() {
     QString sharePath = client_->getSharePath();
     
+    onLogMessage(QString("Attempting to initialize indexer with path: %1").arg(sharePath));
+    
     if (sharePath.isEmpty()) {
         onLogMessage("Share path not set, content indexing disabled");
         return;
@@ -700,8 +702,11 @@ void MainWindow::initializeIndexer() {
     QDir().mkpath(appDataPath);
     QString dbPath = appDataPath + "/content_index.db";
     
+    onLogMessage(QString("Database path: %1").arg(dbPath));
+    onLogMessage(QString("App data path exists: %1").arg(QDir(appDataPath).exists() ? "yes" : "no"));
+    
     if (!indexer_->initialize(sharePath, dbPath)) {
-        onLogMessage("Failed to initialize content indexer");
+        onLogMessage("Failed to initialize content indexer - check database permissions and SQLite driver");
         delete indexer_;
         indexer_ = nullptr;
         return;
