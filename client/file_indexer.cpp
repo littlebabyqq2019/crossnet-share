@@ -963,7 +963,79 @@ QStringList FileIndexer::searchWithBoolean(const QString& query, const QStringLi
         andTerms << currentQuery.trimmed();
     }
     
-    // 构建 SQL 查询
+    // 特殊处理：OR 查询使用混合搜索策略
+    // 对每个词都执行 search()（包含 FTS5 + LIKE 降级），然后合并结果
+    if (!orTerms.isEmpty() && andTerms.isEmpty()) {
+        emit logMessage("[FileIndexer] Using hybrid search for OR query (FTS5 + LIKE per term)");
+        
+        QSet<QString> allResults;  // 使用 QSet 自动去重
+        
+        for (const QString& term : orTerms) {
+            // 对每个 OR 词执行完整搜索（包含 FTS5 尝试和 LIKE 降级）
+            QStringList termResults = search(term, fileTypes);
+            for (const QString& result : termResults) {
+                allResults.insert(result);
+            }
+        }
+        
+        // 应用 NOT 过滤
+        if (!notTerms.isEmpty()) {
+            emit logMessage("[FileIndexer] Applying NOT filters to OR results");
+            QSet<QString> filteredResults;
+            
+            for (const QString& filePath : allResults) {
+                bool shouldExclude = false;
+                
+                // 从数据库查询文件内容
+                QString contentCheckSql = "SELECT fts.content, f.file_name FROM files f "
+                                         "JOIN files_fts fts ON f.file_id = CAST(fts.file_id AS INTEGER) "
+                                         "WHERE f.file_path = ?";
+                
+                sqlite3_stmt* stmt = nullptr;
+                if (prepareStatement(contentCheckSql, &stmt)) {
+                    sqlite3_bind_text(stmt, 1, filePath.toUtf8().constData(), -1, SQLITE_TRANSIENT);
+                    
+                    if (sqlite3_step(stmt) == SQLITE_ROW) {
+                        const unsigned char* content = sqlite3_column_text(stmt, 0);
+                        const unsigned char* fileName = sqlite3_column_text(stmt, 1);
+                        
+                        QString contentStr;
+                        QString fileNameStr;
+                        
+                        if (content) {
+                            contentStr = QString::fromUtf8(reinterpret_cast<const char*>(content));
+                        }
+                        if (fileName) {
+                            fileNameStr = QString::fromUtf8(reinterpret_cast<const char*>(fileName));
+                        }
+                        
+                        // 检查是否包含任何 NOT 词
+                        for (const QString& notTerm : notTerms) {
+                            if (contentStr.contains(notTerm, Qt::CaseInsensitive) ||
+                                fileNameStr.contains(notTerm, Qt::CaseInsensitive)) {
+                                shouldExclude = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    finalizeStatement(stmt);
+                }
+                
+                if (!shouldExclude) {
+                    filteredResults.insert(filePath);
+                }
+            }
+            
+            emit logMessage(QString("[FileIndexer] OR with NOT completed: %1 results").arg(filteredResults.size()));
+            return filteredResults.toList();
+        }
+        
+        emit logMessage(QString("[FileIndexer] OR search completed: %1 results").arg(allResults.size()));
+        return allResults.toList();
+    }
+    
+    // 对于 AND 或复杂查询，继续使用原有逻辑
     QString sql;
     QStringList bindValues;
     
