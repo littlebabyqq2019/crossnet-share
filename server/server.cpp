@@ -249,15 +249,9 @@ QString Server::broadcastContentSearch(const QString& query) {
     payload["searchId"] = searchId.toStdString();
     payload["query"] = query.toStdString();
     
-    QByteArray message = Protocol::serializeMessage(
-        MessageType::CONTENT_SEARCH_REQUEST,
-        payload
-    );
-    
     for (ClientHandler* handler : clients_) {
-        if (handler && handler->isConnected()) {
-            handler->socket()->write(message);
-            handler->socket()->flush();
+        if (handler && handler->isRegistered()) {
+            handler->sendMessage(MessageType::CONTENT_SEARCH_REQUEST, payload);
             cache.expectedClients++;
         }
     }
