@@ -8,6 +8,9 @@
 #include <QTcpServer>
 #include <QList>
 #include <QHostAddress>
+#include <QMutex>
+#include <QMap>
+#include <QDateTime>
 
 namespace CrossNetShare {
 
