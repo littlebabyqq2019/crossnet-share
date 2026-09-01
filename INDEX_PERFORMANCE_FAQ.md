@@ -4,24 +4,37 @@
 
 ### Windows
 ```
-C:\Users\<用户名>\AppData\Local\CrossNetShare\content_index.db
+C:\Users\<用户名>\AppData\Local\CrossNetShareClient\content_index.db
 ```
 
 ### Linux
 ```
-~/.local/share/CrossNetShare/content_index.db
+~/.local/share/CrossNetShareClient/content_index.db
 ```
 
 ### macOS
 ```
-~/Library/Application Support/CrossNetShare/content_index.db
+~/Library/Application Support/CrossNetShareClient/content_index.db
 ```
+
+**说明**：
+- 文件夹名称为 `CrossNetShareClient`（客户端可执行文件名）
+- Qt 使用 `QStandardPaths::AppDataLocation` 自动创建
 
 **代码实现**：
 ```cpp
 // client/ui/main_window.cpp:710
 QString appDataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 QString dbPath = appDataPath + "/content_index.db";
+```
+
+**验证方法**（Windows）：
+```powershell
+# 查看索引文件
+dir "$env:LOCALAPPDATA\CrossNetShareClient\content_index.db"
+
+# 查看文件大小
+Get-Item "$env:LOCALAPPDATA\CrossNetShareClient\content_index.db" | Select Name, Length, LastWriteTime
 ```
 
 ## 2. 索引 7000-8000 个 Word 文档的性能估算
@@ -237,11 +250,14 @@ QtConcurrent::run(QThreadPool::globalInstance(), [this, path]() {
 ### 查看索引文件大小
 
 ```bash
-# Windows
-dir "%LOCALAPPDATA%\CrossNetShare\content_index.db"
+# Windows (CMD)
+dir "%LOCALAPPDATA%\CrossNetShareClient\content_index.db"
+
+# Windows (PowerShell)
+Get-Item "$env:LOCALAPPDATA\CrossNetShareClient\content_index.db"
 
 # Linux/Mac
-ls -lh ~/.local/share/CrossNetShare/content_index.db
+ls -lh ~/.local/share/CrossNetShareClient/content_index.db
 ```
 
 ### 手动触发重新索引
