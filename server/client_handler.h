@@ -51,6 +51,9 @@ public:
 
     // 请求客户端刷新文件索引
     void requestRefresh();
+    
+    // 广播内容搜索请求
+    void broadcastSearchRequest(const QString& searchId, const QString& query);
 
 signals:
     void disconnected(const QString& clientId);

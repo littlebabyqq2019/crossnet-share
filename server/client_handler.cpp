@@ -636,6 +636,13 @@ void ClientHandler::requestRefresh() {
     sendMessage(MessageType::REFRESH_INDEX_REQUEST, payload);
 }
 
+void ClientHandler::broadcastSearchRequest(const QString& searchId, const QString& query) {
+    nlohmann::json payload;
+    payload["searchId"] = searchId.toStdString();
+    payload["query"] = query.toStdString();
+    sendMessage(MessageType::CONTENT_SEARCH_REQUEST, payload);
+}
+
 void ClientHandler::handleContentSearchResponse(const nlohmann::json& payload) {
     try {
         QString searchId = QString::fromStdString(payload["searchId"].get<std::string>());

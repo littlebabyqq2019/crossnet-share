@@ -245,13 +245,9 @@ QString Server::broadcastContentSearch(const QString& query) {
     cache.receivedClients = 0;
     
     // 广播搜索请求到所有在线客户端
-    nlohmann::json payload;
-    payload["searchId"] = searchId.toStdString();
-    payload["query"] = query.toStdString();
-    
     for (ClientHandler* handler : clients_) {
         if (handler && handler->isRegistered()) {
-            handler->sendMessage(MessageType::CONTENT_SEARCH_REQUEST, payload);
+            handler->broadcastSearchRequest(searchId, query);
             cache.expectedClients++;
         }
     }
