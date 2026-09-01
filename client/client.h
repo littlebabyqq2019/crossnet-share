@@ -7,6 +7,7 @@
 #include <QByteArray>
 #include <QTimer>
 #include <QFileSystemWatcher>
+#include <QDateTime>
 #include <functional>
 
 namespace CrossNetShare {
