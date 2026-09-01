@@ -732,7 +732,7 @@ void Client::setFileIndexer(FileIndexer* indexer) {
 
 }
 
-void Client::sendHeartbeat() {
+void CrossNetShare::Client::sendHeartbeat() {
     if (!connected_ || socket_->state() != QAbstractSocket::ConnectedState) {
         return;
     }
@@ -749,7 +749,7 @@ void Client::sendHeartbeat() {
     // emit logMessage("Heartbeat sent");
 }
 
-void Client::checkHeartbeatResponse() {
+void CrossNetShare::Client::checkHeartbeatResponse() {
     if (!connected_) {
         return;
     }
@@ -773,7 +773,7 @@ void Client::checkHeartbeatResponse() {
     }
 }
 
-void Client::handleHeartbeatResponse(const nlohmann::json& payload) {
+void CrossNetShare::Client::handleHeartbeatResponse(const nlohmann::json& payload) {
     lastHeartbeatReceived_ = QDateTime::currentDateTime();
     waitingForHeartbeatResponse_ = false;
     
