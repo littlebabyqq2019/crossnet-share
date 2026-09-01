@@ -81,6 +81,8 @@ private slots:
     void onDirectoryChanged(const QString& path);
     void onFileChanged(const QString& path);
     void onRefreshTimerTimeout();
+    void sendHeartbeat();
+    void checkHeartbeatResponse();
 
 private:
     void handleMessage(MessageType type, const nlohmann::json& payload);
@@ -96,6 +98,7 @@ private:
     void handleUploadResponse(const nlohmann::json& payload);
     void handleBatchDownloadResponse(const nlohmann::json& payload);
     void handleErrorMessage(const nlohmann::json& payload);
+    void handleHeartbeatResponse(const nlohmann::json& payload);
 
     void sendMessage(MessageType type, const nlohmann::json& payload);
     QStringList performContentSearch(const QString& query);
@@ -113,6 +116,13 @@ private:
     QString serverHost_;
     quint16 serverPort_;
     int reconnectAttempts_;
+    
+    // 心跳检测
+    QTimer* heartbeatTimer_;
+    QTimer* heartbeatCheckTimer_;
+    QDateTime lastHeartbeatSent_;
+    QDateTime lastHeartbeatReceived_;
+    bool waitingForHeartbeatResponse_;
 
     // 配置信息
     QString clientId_;

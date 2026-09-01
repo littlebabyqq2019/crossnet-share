@@ -17,6 +17,9 @@ Client::Client(QObject* parent)
     , autoReconnect_(false)
     , serverPort_(0)
     , reconnectAttempts_(0)
+    , heartbeatTimer_(new QTimer(this))
+    , heartbeatCheckTimer_(new QTimer(this))
+    , waitingForHeartbeatResponse_(false)
     , fileWatcher_(new QFileSystemWatcher(this))
     , refreshTimer_(new QTimer(this))
     , fileIndexer_(nullptr)
@@ -36,6 +39,14 @@ Client::Client(QObject* parent)
             socket_->connectToHost(serverHost_, serverPort_);
         }
     });
+
+    // 配置心跳定时器 - 每 30 秒发送一次心跳
+    heartbeatTimer_->setInterval(30000);  // 30 秒
+    connect(heartbeatTimer_, &QTimer::timeout, this, &Client::sendHeartbeat);
+    
+    // 配置心跳检查定时器 - 每 60 秒检查一次是否收到心跳响应
+    heartbeatCheckTimer_->setInterval(60000);  // 60 秒
+    connect(heartbeatCheckTimer_, &QTimer::timeout, this, &Client::checkHeartbeatResponse);
 
     // 配置文件监视器
     connect(fileWatcher_, &QFileSystemWatcher::directoryChanged, this, &Client::onDirectoryChanged);
@@ -213,9 +224,16 @@ void Client::onConnected() {
     connected_ = true;
     reconnectAttempts_ = 0;
     reconnectTimer_->stop();
+    
+    // 启动心跳机制
+    lastHeartbeatSent_ = QDateTime::currentDateTime();
+    lastHeartbeatReceived_ = QDateTime::currentDateTime();
+    waitingForHeartbeatResponse_ = false;
+    heartbeatTimer_->start();
+    heartbeatCheckTimer_->start();
 
     emit connected();
-    emit logMessage("Connected to server");
+    emit logMessage("Connected to server - heartbeat started");
 
     // 如果有保存的配置，自动重新注册
     if (!clientId_.isEmpty() && !sharePath_.isEmpty()) {
@@ -226,6 +244,12 @@ void Client::onConnected() {
 
 void Client::onDisconnected() {
     connected_ = false;
+    
+    // 停止心跳机制
+    heartbeatTimer_->stop();
+    heartbeatCheckTimer_->stop();
+    waitingForHeartbeatResponse_ = false;
+    
     emit disconnected();
     emit logMessage("Disconnected from server");
 
@@ -334,6 +358,10 @@ void Client::handleMessage(MessageType type, const nlohmann::json& payload) {
 
     case MessageType::ERROR_MESSAGE:
         handleErrorMessage(payload);
+        break;
+    
+    case MessageType::HEARTBEAT:
+        handleHeartbeatResponse(payload);
         break;
 
     default:
@@ -702,4 +730,53 @@ void Client::setFileIndexer(FileIndexer* indexer) {
     emit logMessage("[Client] FileIndexer linked for content search");
 }
 
+}
+
+void Client::sendHeartbeat() {
+    if (!connected_ || socket_->state() != QAbstractSocket::ConnectedState) {
+        return;
+    }
+    
+    nlohmann::json payload;
+    payload["clientId"] = clientId_.toStdString();
+    payload["timestamp"] = QDateTime::currentSecsSinceEpoch();
+    
+    sendMessage(MessageType::HEARTBEAT, payload);
+    lastHeartbeatSent_ = QDateTime::currentDateTime();
+    waitingForHeartbeatResponse_ = true;
+    
+    // 打印调试信息（可选）
+    // emit logMessage("Heartbeat sent");
+}
+
+void Client::checkHeartbeatResponse() {
+    if (!connected_) {
+        return;
+    }
+    
+    // 检查是否在等待心跳响应
+    if (waitingForHeartbeatResponse_) {
+        qint64 secondsSinceLastSent = lastHeartbeatSent_.secsTo(QDateTime::currentDateTime());
+        
+        // 如果超过 60 秒没有收到响应，认为连接已断开
+        if (secondsSinceLastSent > 60) {
+            emit logMessage("Heartbeat timeout - connection appears dead, forcing reconnect...");
+            
+            // 主动断开并触发重连
+            socket_->disconnectFromHost();
+            
+            // 如果断开没有立即生效，强制关闭
+            if (socket_->state() != QAbstractSocket::UnconnectedState) {
+                socket_->abort();
+            }
+        }
+    }
+}
+
+void Client::handleHeartbeatResponse(const nlohmann::json& payload) {
+    lastHeartbeatReceived_ = QDateTime::currentDateTime();
+    waitingForHeartbeatResponse_ = false;
+    
+    // 打印调试信息（可选）
+    // emit logMessage("Heartbeat received");
 }
