@@ -3,6 +3,7 @@
 #include "file_indexer.h"
 #include "client_handler.h"
 #include "file_watcher.h"
+#include "common/message.h"
 #include <QObject>
 #include <QTcpServer>
 #include <QList>
