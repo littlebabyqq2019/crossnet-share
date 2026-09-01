@@ -704,13 +704,12 @@ void MainWindow::initializeIndexer() {
     // 立即连接日志信号，以便初始化过程中的日志能被接收
     connect(indexer_, &FileIndexer::logMessage, this, &MainWindow::onLogMessage);
     
-    // 设置索引数据库路径
-    QString appDataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir().mkpath(appDataPath);
-    QString dbPath = appDataPath + "/content_index.db";
+    // 设置索引数据库路径 - 保存在客户端可执行文件所在目录
+    QString appDir = QCoreApplication::applicationDirPath();
+    QString dbPath = appDir + "/content_index.db";
     
     onLogMessage(QString("Database path: %1").arg(dbPath));
-    onLogMessage(QString("App data path exists: %1").arg(QDir(appDataPath).exists() ? "yes" : "no"));
+    onLogMessage(QString("Application directory: %1").arg(appDir));
     
     onLogMessage("=== DEBUG: About to call indexer_->initialize() ===");
     if (!indexer_->initialize(sharePath, dbPath)) {
