@@ -776,14 +776,6 @@ void MainWindow::initializeIndexer() {
         onLogMessage("Performing incremental index update (new and modified files only)...");
         QTimer::singleShot(2000, indexer_, &FileIndexer::updateIndex);
     }
-    
-    // 触发首次索引（在后台线程，延迟2秒避免启动时卡顿）
-    QTimer::singleShot(2000, [this]() {
-        if (indexer_) {
-            onLogMessage("Starting initial content indexing (this may take a while)...");
-            indexer_->rebuildIndex();
-        }
-    });
 }
 
 void MainWindow::onIndexSettingsClicked() {

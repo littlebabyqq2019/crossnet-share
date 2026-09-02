@@ -459,9 +459,23 @@ void FileIndexer::updateIndex() {
         QStringList filesToIndex;
         int skipped = 0;
         
+        // 添加调试：输出前几个文件的检查结果
+        int debugCount = 0;
+        
         for (const QString& filePath : filesToCheck) {
             QString hash = calculateFileHash(filePath);
-            if (!isFileIndexed(filePath, hash)) {
+            bool indexed = isFileIndexed(filePath, hash);
+            
+            // 调试：输出前5个文件的检查结果
+            if (debugCount < 5) {
+                emit logMessage(QString("[FileIndexer] DEBUG: Check '%1', hash='%2', indexed=%3")
+                    .arg(QFileInfo(filePath).fileName())
+                    .arg(hash.left(8))  // 只显示前8个字符
+                    .arg(indexed ? "YES" : "NO"));
+                debugCount++;
+            }
+            
+            if (!indexed) {
                 filesToIndex << filePath;
             } else {
                 skipped++;
