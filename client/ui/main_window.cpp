@@ -711,6 +711,14 @@ void MainWindow::initializeIndexer() {
     onLogMessage(QString("Database path: %1").arg(dbPath));
     onLogMessage(QString("Application directory: %1").arg(appDir));
     
+    // 检查数据库是否已存在
+    bool dbExists = QFileInfo::exists(dbPath);
+    if (dbExists) {
+        onLogMessage("Existing index database found");
+    } else {
+        onLogMessage("No existing index database, will create new one");
+    }
+    
     onLogMessage("=== DEBUG: About to call indexer_->initialize() ===");
     if (!indexer_->initialize(sharePath, dbPath)) {
         onLogMessage("=== DEBUG: indexer_->initialize() returned FALSE ===");
@@ -727,7 +735,7 @@ void MainWindow::initializeIndexer() {
     config.includedExtensions = QStringList{"txt", "pdf", "doc", "docx"};
     config.excludedPatterns = QStringList{"~$*", "*.tmp", "temp/*"};
     config.maxFileSizeMB = 50;
-    config.scanIntervalMinutes = 60;
+    config.scanIntervalMinutes = 10;  // 改为10分钟扫描一次新文件
     
     indexer_->setConfig(config);
     
@@ -748,7 +756,7 @@ void MainWindow::initializeIndexer() {
         onLogMessage("Indexing error: " + error);
     });
     
-    // 启动索引器
+    // 启动索引器（启动监控和定时扫描）
     indexer_->start();
     onLogMessage("Content indexer initialized and started");
     
@@ -756,6 +764,17 @@ void MainWindow::initializeIndexer() {
     if (client_) {
         client_->setFileIndexer(indexer_);
         onLogMessage("[MainWindow] FileIndexer linked to Client for content search");
+    }
+    
+    // 检查是否需要初始索引或增量更新
+    if (!dbExists) {
+        // 首次运行，需要完整索引
+        onLogMessage("First time indexing - will build complete index...");
+        QTimer::singleShot(2000, indexer_, &FileIndexer::rebuildIndex);
+    } else {
+        // 数据库已存在，执行增量更新（只索引新文件和修改的文件）
+        onLogMessage("Performing incremental index update (new and modified files only)...");
+        QTimer::singleShot(2000, indexer_, &FileIndexer::updateIndex);
     }
     
     // 触发首次索引（在后台线程，延迟2秒避免启动时卡顿）

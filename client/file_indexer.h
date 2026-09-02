@@ -63,6 +63,7 @@ public:
     
     // 索引操作
     void rebuildIndex();                    // 重建全部索引
+    void updateIndex();                     // 增量更新索引（只索引新增和修改的文件）
     void clearIndex();                      // 清除索引
     void updateFileIndex(const QString& filePath);  // 更新单个文件索引
     
