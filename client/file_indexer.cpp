@@ -1429,30 +1429,38 @@ QString FileIndexer::buildFTS5Query(const QString& userQuery) const {
 IndexStats FileIndexer::getStats() {
     IndexStats stats = stats_;
     
-    // 更新统计信息
-    sqlite3_stmt* stmt = nullptr;
-    
-    // 文件总数
-    const char* sql = "SELECT COUNT(*) FROM files";
-    if (prepareStatement(QString::fromUtf8(sql), &stmt)) {
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            stats.totalFiles = sqlite3_column_int(stmt, 0);
+    try {
+        // 更新统计信息
+        sqlite3_stmt* stmt = nullptr;
+        
+        // 文件总数
+        const char* sql = "SELECT COUNT(*) FROM files";
+        if (prepareStatement(QString::fromUtf8(sql), &stmt)) {
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                stats.totalFiles = sqlite3_column_int(stmt, 0);
+            }
+            finalizeStatement(stmt);
         }
-        finalizeStatement(stmt);
+        
+        // 数据库大小
+        QFileInfo dbInfo(dbPath_);
+        if (dbInfo.exists()) {
+            stats.indexSizeMB = dbInfo.size() / (1024 * 1024);
+        }
+        
+        // 待索引文件数
+        QMutexLocker locker(&queueMutex_);
+        stats.pendingFiles = indexQueue_.size();
+        stats.isIndexing = isIndexing_;
+        
+        return stats;
+    } catch (const std::exception& e) {
+        emit logMessage(QString("[FileIndexer] Error in getStats: %1").arg(e.what()));
+        return stats_;  // 返回缓存的统计信息
+    } catch (...) {
+        emit logMessage("[FileIndexer] Error in getStats: Unknown exception");
+        return stats_;  // 返回缓存的统计信息
     }
-    
-    // 数据库大小
-    QFileInfo dbInfo(dbPath_);
-    if (dbInfo.exists()) {
-        stats.indexSizeMB = dbInfo.size() / (1024 * 1024);
-    }
-    
-    // 待索引文件数
-    QMutexLocker locker(&queueMutex_);
-    stats.pendingFiles = indexQueue_.size();
-    stats.isIndexing = isIndexing_;
-    
-    return stats;
 }
 
 bool FileIndexer::shouldIndexFile(const QString& filePath) const {

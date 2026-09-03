@@ -756,11 +756,17 @@ void MainWindow::initializeIndexer() {
     });
     
     connect(indexer_, &FileIndexer::indexingFinished, [this]() {
-        onLogMessage("Content indexing finished");
-        IndexStats stats = indexer_->getStats();
-        onLogMessage(QString("Indexed %1 files, total size: %2 MB")
-            .arg(stats.totalFiles)
-            .arg(stats.indexSizeMB));
+        try {
+            onLogMessage("Content indexing finished");
+            IndexStats stats = indexer_->getStats();
+            onLogMessage(QString("Indexed %1 files, total size: %2 MB")
+                .arg(stats.totalFiles)
+                .arg(stats.indexSizeMB));
+        } catch (const std::exception& e) {
+            onLogMessage(QString("Error in indexingFinished handler: %1").arg(e.what()));
+        } catch (...) {
+            onLogMessage("Error in indexingFinished handler: Unknown exception");
+        }
     });
     
     connect(indexer_, &FileIndexer::indexingError, [this](const QString& error) {
