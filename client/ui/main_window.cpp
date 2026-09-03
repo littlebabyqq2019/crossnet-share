@@ -736,7 +736,8 @@ void MainWindow::initializeIndexer() {
     onLogMessage("=== DEBUG: FileIndexer object created ===");
     
     // 立即连接日志信号，以便初始化过程中的日志能被接收
-    connect(indexer_, &FileIndexer::logMessage, this, &MainWindow::onLogMessage);
+    // 使用 Qt::QueuedConnection 确保从后台线程发送的日志消息能安全传递到主线程
+    connect(indexer_, &FileIndexer::logMessage, this, &MainWindow::onLogMessage, Qt::QueuedConnection);
     
     // 设置索引数据库路径 - 保存在客户端可执行文件所在目录
     QString appDir = QCoreApplication::applicationDirPath();
@@ -774,11 +775,12 @@ void MainWindow::initializeIndexer() {
     indexer_->setConfig(config);
     
     // 连接其他信号（日志信号已经在创建对象后立即连接）
-    connect(indexer_, &FileIndexer::indexingStarted, [this]() {
+    // 重要：使用 Qt::QueuedConnection 确保信号从后台线程安全传递到主线程
+    connect(indexer_, &FileIndexer::indexingStarted, this, [this]() {
         onLogMessage("Content indexing started...");
-    });
+    }, Qt::QueuedConnection);
     
-    connect(indexer_, &FileIndexer::indexingFinished, [this]() {
+    connect(indexer_, &FileIndexer::indexingFinished, this, [this]() {
         try {
             onLogMessage("Content indexing finished");
             IndexStats stats = indexer_->getStats();
@@ -790,11 +792,11 @@ void MainWindow::initializeIndexer() {
         } catch (...) {
             onLogMessage("Error in indexingFinished handler: Unknown exception");
         }
-    });
+    }, Qt::QueuedConnection);
     
-    connect(indexer_, &FileIndexer::indexingError, [this](const QString& error) {
+    connect(indexer_, &FileIndexer::indexingError, this, [this](const QString& error) {
         onLogMessage("Indexing error: " + error);
-    });
+    }, Qt::QueuedConnection);
     
     // 启动索引器（启动监控和定时扫描）
     indexer_->start();
