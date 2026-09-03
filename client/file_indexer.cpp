@@ -363,59 +363,69 @@ void FileIndexer::rebuildIndex() {
     
     // 异步执行索引重建
     QtConcurrent::run([this]() {
-        // 清空现有索引
-        execSQL("BEGIN TRANSACTION");
-        execSQL("DELETE FROM files");
-        execSQL("DELETE FROM files_fts");
-        execSQL("COMMIT");
-        
-        // 扫描所有文件
-        QStringList filters;
-        for (const QString& ext : config_.includedExtensions) {
-            filters << "*." + ext;
-        }
-        
-        QDirIterator it(sharedPath_, filters, QDir::Files,
-                        QDirIterator::Subdirectories | QDirIterator::FollowSymlinks);
-        
-        QStringList filesToIndex;
-        while (it.hasNext()) {
-            QString filePath = it.next();
-            if (shouldIndexFile(filePath)) {
-                filesToIndex << filePath;
-            }
-        }
-        
-        int total = filesToIndex.size();
-        int current = 0;
-        
-        qDebug() << "Found" << total << "files to index";
-        
-        // 批量索引
-        execSQL("BEGIN TRANSACTION");
-        for (const QString& filePath : filesToIndex) {
-            indexFile(filePath);
-            current++;
+        try {
+            // 清空现有索引
+            execSQL("BEGIN TRANSACTION");
+            execSQL("DELETE FROM files");
+            execSQL("DELETE FROM files_fts");
+            execSQL("COMMIT");
             
-            if (current % 10 == 0) {
-                emit indexingProgress(current, total);
+            // 扫描所有文件
+            QStringList filters;
+            for (const QString& ext : config_.includedExtensions) {
+                filters << "*." + ext;
             }
             
-            if (current % 100 == 0) {
-                execSQL("COMMIT");
-                execSQL("BEGIN TRANSACTION");
+            QDirIterator it(sharedPath_, filters, QDir::Files,
+                            QDirIterator::Subdirectories | QDirIterator::FollowSymlinks);
+            
+            QStringList filesToIndex;
+            while (it.hasNext()) {
+                QString filePath = it.next();
+                if (shouldIndexFile(filePath)) {
+                    filesToIndex << filePath;
+                }
             }
+            
+            int total = filesToIndex.size();
+            int current = 0;
+            
+            qDebug() << "Found" << total << "files to index";
+            
+            // 批量索引
+            execSQL("BEGIN TRANSACTION");
+            for (const QString& filePath : filesToIndex) {
+                indexFile(filePath);
+                current++;
+                
+                if (current % 10 == 0) {
+                    emit indexingProgress(current, total);
+                }
+                
+                if (current % 100 == 0) {
+                    execSQL("COMMIT");
+                    execSQL("BEGIN TRANSACTION");
+                }
+            }
+            execSQL("COMMIT");
+            
+            isIndexing_ = false;
+            
+            // 更新统计信息
+            stats_.totalFiles = total;
+            stats_.lastUpdateTime = QDateTime::currentDateTime();
+            
+            qDebug() << "Index rebuild completed," << total << "files indexed";
+            emit indexingFinished();
+        } catch (const std::exception& e) {
+            emit logMessage(QString("[FileIndexer] FATAL ERROR in rebuildIndex: %1").arg(e.what()));
+            isIndexing_ = false;
+            emit indexingFinished();
+        } catch (...) {
+            emit logMessage("[FileIndexer] FATAL ERROR in rebuildIndex: Unknown exception");
+            isIndexing_ = false;
+            emit indexingFinished();
         }
-        execSQL("COMMIT");
-        
-        isIndexing_ = false;
-        
-        // 更新统计信息
-        stats_.totalFiles = total;
-        stats_.lastUpdateTime = QDateTime::currentDateTime();
-        
-        qDebug() << "Index rebuild completed," << total << "files indexed";
-        emit indexingFinished();
     });
 }
 
@@ -432,130 +442,140 @@ void FileIndexer::updateIndex() {
     
     // 异步执行增量索引
     QtConcurrent::run([this]() {
-        // 扫描所有文件
-        QStringList filters;
-        for (const QString& ext : config_.includedExtensions) {
-            filters << "*." + ext;
-        }
-        
-        emit logMessage("[FileIndexer] Scanning files in shared directory...");
-        QDirIterator it(sharedPath_, filters, QDir::Files,
-                        QDirIterator::Subdirectories | QDirIterator::FollowSymlinks);
-        
-        QStringList filesToCheck;
-        QSet<QString> currentFiles;
-        
-        while (it.hasNext()) {
-            QString filePath = it.next();
-            if (shouldIndexFile(filePath)) {
-                filesToCheck << filePath;
-                currentFiles.insert(filePath);
-            }
-        }
-        
-        emit logMessage(QString("[FileIndexer] Found %1 files to check").arg(filesToCheck.size()));
-        
-        // 检查哪些文件需要索引或更新
-        QStringList filesToIndex;
-        int skipped = 0;
-        
-        // 添加调试：输出前几个文件的检查结果
-        int debugCount = 0;
-        
-        for (const QString& filePath : filesToCheck) {
-            QString hash = calculateFileHash(filePath);
-            bool indexed = isFileIndexed(filePath, hash);
-            
-            // 调试：输出前5个文件的检查结果
-            if (debugCount < 5) {
-                emit logMessage(QString("[FileIndexer] DEBUG: Check '%1', hash='%2', indexed=%3")
-                    .arg(QFileInfo(filePath).fileName())
-                    .arg(hash.left(8))  // 只显示前8个字符
-                    .arg(indexed ? "YES" : "NO"));
-                debugCount++;
+        try {
+            // 扫描所有文件
+            QStringList filters;
+            for (const QString& ext : config_.includedExtensions) {
+                filters << "*." + ext;
             }
             
-            if (!indexed) {
-                filesToIndex << filePath;
-            } else {
-                skipped++;
-            }
-        }
-        
-        emit logMessage(QString("[FileIndexer] %1 files already indexed (skipped), %2 files need indexing")
-            .arg(skipped).arg(filesToIndex.size()));
-        
-        // 检查已索引的文件是否已被删除
-        int removed = 0;
-        sqlite3_stmt* stmt = nullptr;
-        const char* selectSql = "SELECT file_path FROM files";
-        
-        if (prepareStatement(QString::fromUtf8(selectSql), &stmt)) {
-            QStringList indexedFiles;
-            while (sqlite3_step(stmt) == SQLITE_ROW) {
-                const unsigned char* filePath = sqlite3_column_text(stmt, 0);
-                if (filePath) {
-                    indexedFiles << QString::fromUtf8(reinterpret_cast<const char*>(filePath));
+            emit logMessage("[FileIndexer] Scanning files in shared directory...");
+            QDirIterator it(sharedPath_, filters, QDir::Files,
+                            QDirIterator::Subdirectories | QDirIterator::FollowSymlinks);
+            
+            QStringList filesToCheck;
+            QSet<QString> currentFiles;
+            
+            while (it.hasNext()) {
+                QString filePath = it.next();
+                if (shouldIndexFile(filePath)) {
+                    filesToCheck << filePath;
+                    currentFiles.insert(filePath);
                 }
             }
-            finalizeStatement(stmt);
             
-            // 删除不存在的文件
-            for (const QString& indexedFile : indexedFiles) {
-                if (!currentFiles.contains(indexedFile)) {
-                    removeFileFromIndex(indexedFile);
-                    removed++;
+            emit logMessage(QString("[FileIndexer] Found %1 files to check").arg(filesToCheck.size()));
+            
+            // 检查哪些文件需要索引或更新
+            QStringList filesToIndex;
+            int skipped = 0;
+            
+            // 添加调试：输出前几个文件的检查结果
+            int debugCount = 0;
+            
+            for (const QString& filePath : filesToCheck) {
+                QString hash = calculateFileHash(filePath);
+                bool indexed = isFileIndexed(filePath, hash);
+                
+                // 调试：输出前5个文件的检查结果
+                if (debugCount < 5) {
+                    emit logMessage(QString("[FileIndexer] DEBUG: Check '%1', hash='%2', indexed=%3")
+                        .arg(QFileInfo(filePath).fileName())
+                        .arg(hash.left(8))  // 只显示前8个字符
+                        .arg(indexed ? "YES" : "NO"));
+                    debugCount++;
+                }
+                
+                if (!indexed) {
+                    filesToIndex << filePath;
+                } else {
+                    skipped++;
                 }
             }
-        }
-        
-        if (removed > 0) {
-            emit logMessage(QString("[FileIndexer] Removed %1 deleted files from index").arg(removed));
-        }
-        
-        // 如果没有需要索引的文件，直接结束
-        if (filesToIndex.isEmpty()) {
-            emit logMessage("[FileIndexer] Index is up to date, no files need indexing");
+            
+            emit logMessage(QString("[FileIndexer] %1 files already indexed (skipped), %2 files need indexing")
+                .arg(skipped).arg(filesToIndex.size()));
+            
+            // 检查已索引的文件是否已被删除
+            int removed = 0;
+            sqlite3_stmt* stmt = nullptr;
+            const char* selectSql = "SELECT file_path FROM files";
+            
+            if (prepareStatement(QString::fromUtf8(selectSql), &stmt)) {
+                QStringList indexedFiles;
+                while (sqlite3_step(stmt) == SQLITE_ROW) {
+                    const unsigned char* filePath = sqlite3_column_text(stmt, 0);
+                    if (filePath) {
+                        indexedFiles << QString::fromUtf8(reinterpret_cast<const char*>(filePath));
+                    }
+                }
+                finalizeStatement(stmt);
+                
+                // 删除不存在的文件
+                for (const QString& indexedFile : indexedFiles) {
+                    if (!currentFiles.contains(indexedFile)) {
+                        removeFileFromIndex(indexedFile);
+                        removed++;
+                    }
+                }
+            }
+            
+            if (removed > 0) {
+                emit logMessage(QString("[FileIndexer] Removed %1 deleted files from index").arg(removed));
+            }
+            
+            // 如果没有需要索引的文件，直接结束
+            if (filesToIndex.isEmpty()) {
+                emit logMessage("[FileIndexer] Index is up to date, no files need indexing");
+                isIndexing_ = false;
+                stats_.totalFiles = filesToCheck.size();
+                stats_.lastUpdateTime = QDateTime::currentDateTime();
+                emit indexingFinished();
+                return;
+            }
+            
+            // 批量索引新文件和修改的文件
+            int total = filesToIndex.size();
+            int current = 0;
+            
+            emit logMessage(QString("[FileIndexer] Indexing %1 files...").arg(total));
+            
+            execSQL("BEGIN TRANSACTION");
+            for (const QString& filePath : filesToIndex) {
+                indexFile(filePath);
+                current++;
+                
+                if (current % 10 == 0) {
+                    emit indexingProgress(current, total);
+                    emit logMessage(QString("[FileIndexer] Progress: %1/%2 (%3%)")
+                        .arg(current).arg(total).arg(current * 100 / total));
+                }
+                
+                if (current % 100 == 0) {
+                    execSQL("COMMIT");
+                    execSQL("BEGIN TRANSACTION");
+                }
+            }
+            execSQL("COMMIT");
+            
             isIndexing_ = false;
+            
+            // 更新统计信息
             stats_.totalFiles = filesToCheck.size();
             stats_.lastUpdateTime = QDateTime::currentDateTime();
+            
+            emit logMessage(QString("[FileIndexer] Incremental update completed: %1 files indexed, %2 skipped, %3 removed")
+                .arg(filesToIndex.size()).arg(skipped).arg(removed));
             emit indexingFinished();
-            return;
+        } catch (const std::exception& e) {
+            emit logMessage(QString("[FileIndexer] FATAL ERROR in updateIndex: %1").arg(e.what()));
+            isIndexing_ = false;
+            emit indexingFinished();
+        } catch (...) {
+            emit logMessage("[FileIndexer] FATAL ERROR in updateIndex: Unknown exception");
+            isIndexing_ = false;
+            emit indexingFinished();
         }
-        
-        // 批量索引新文件和修改的文件
-        int total = filesToIndex.size();
-        int current = 0;
-        
-        emit logMessage(QString("[FileIndexer] Indexing %1 files...").arg(total));
-        
-        execSQL("BEGIN TRANSACTION");
-        for (const QString& filePath : filesToIndex) {
-            indexFile(filePath);
-            current++;
-            
-            if (current % 10 == 0) {
-                emit indexingProgress(current, total);
-                emit logMessage(QString("[FileIndexer] Progress: %1/%2 (%3%)")
-                    .arg(current).arg(total).arg(current * 100 / total));
-            }
-            
-            if (current % 100 == 0) {
-                execSQL("COMMIT");
-                execSQL("BEGIN TRANSACTION");
-            }
-        }
-        execSQL("COMMIT");
-        
-        isIndexing_ = false;
-        
-        // 更新统计信息
-        stats_.totalFiles = filesToCheck.size();
-        stats_.lastUpdateTime = QDateTime::currentDateTime();
-        
-        emit logMessage(QString("[FileIndexer] Incremental update completed: %1 files indexed, %2 skipped, %3 removed")
-            .arg(filesToIndex.size()).arg(skipped).arg(removed));
-        emit indexingFinished();
     });
 }
 
