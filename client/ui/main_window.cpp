@@ -598,8 +598,31 @@ void MainWindow::updateConnectionStatus() {
 
 void MainWindow::appendLog(const QString& message) {
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-    logTextEdit_->append("[" + timestamp + "] " + message);
+    QString logLine = "[" + timestamp + "] " + message;
+    
+    logTextEdit_->append(logLine);
     logTextEdit_->moveCursor(QTextCursor::End);
+    
+    // 同时写入日志文件（用于崩溃后查看）
+    static QFile logFile;
+    static bool logFileInitialized = false;
+    
+    if (!logFileInitialized) {
+        QString appDir = QCoreApplication::applicationDirPath();
+        QString logPath = appDir + "/client_log.txt";
+        logFile.setFileName(logPath);
+        // 追加模式，不覆盖旧日志
+        if (logFile.open(QIODevice::Append | QIODevice::Text)) {
+            logFile.write(QString("\n\n=== Session started at %1 ===\n").arg(timestamp).toUtf8());
+            logFile.flush();
+        }
+        logFileInitialized = true;
+    }
+    
+    if (logFile.isOpen()) {
+        logFile.write((logLine + "\n").toUtf8());
+        logFile.flush();  // 立即刷新，确保崩溃前写入
+    }
 }
 
 void MainWindow::updateFileTree(const std::vector<FileMetadata>& files) {
