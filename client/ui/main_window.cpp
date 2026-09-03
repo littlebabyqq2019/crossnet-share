@@ -143,6 +143,8 @@ void MainWindow::setupTrayIcon() {
     trayIcon_->show();
 
     // 启动后隐藏到托盘
+    // 临时禁用：方便调试崩溃问题
+    /*
     QTimer::singleShot(1000, this, [this]() {
         hide();
         if (trayIcon_) {
@@ -152,6 +154,15 @@ void MainWindow::setupTrayIcon() {
                                    2000);
         }
     });
+    */
+    
+    // 显示提示：窗口保持可见以便调试
+    if (trayIcon_) {
+        trayIcon_->showMessage("CrossNetShare 客户端 (调试模式)",
+                               "窗口将保持可见以便查看日志",
+                               QSystemTrayIcon::Information,
+                               3000);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -818,32 +829,46 @@ void MainWindow::performContentSearch(const QString& query) {
     
     // 在后台线程执行搜索
     QtConcurrent::run([this, query]() {
-        QStringList results = indexer_->search(query);
-        
-        // 回到主线程更新UI
-        QMetaObject::invokeMethod(this, [this, results, query]() {
-            if (results.isEmpty()) {
-                searchResultLabel_->setText("未找到匹配结果");
-                searchResultLabel_->setStyleSheet("color: gray;");
-                onLogMessage(QString("Content search for '%1': no results").arg(query));
-            } else {
-                searchResultLabel_->setText(QString("找到 %1 个匹配文件").arg(results.size()));
-                searchResultLabel_->setStyleSheet("color: green;");
-                onLogMessage(QString("Content search for '%1': %2 results").arg(query).arg(results.size()));
-                
-                // 在日志中显示搜索结果
-                onLogMessage("Search results:");
-                int count = 0;
-                for (const QString& path : results) {
-                    onLogMessage("  - " + path);
-                    count++;
-                    if (count >= 20) {  // 限制显示前20个结果
-                        onLogMessage(QString("  ... and %1 more results").arg(results.size() - 20));
-                        break;
+        try {
+            QStringList results = indexer_->search(query);
+            
+            // 回到主线程更新UI
+            QMetaObject::invokeMethod(this, [this, results, query]() {
+                if (results.isEmpty()) {
+                    searchResultLabel_->setText("未找到匹配结果");
+                    searchResultLabel_->setStyleSheet("color: gray;");
+                    onLogMessage(QString("Content search for '%1': no results").arg(query));
+                } else {
+                    searchResultLabel_->setText(QString("找到 %1 个匹配文件").arg(results.size()));
+                    searchResultLabel_->setStyleSheet("color: green;");
+                    onLogMessage(QString("Content search for '%1': %2 results").arg(query).arg(results.size()));
+                    
+                    // 在日志中显示搜索结果
+                    onLogMessage("Search results:");
+                    int count = 0;
+                    for (const QString& path : results) {
+                        onLogMessage("  - " + path);
+                        count++;
+                        if (count >= 20) {  // 限制显示前20个结果
+                            onLogMessage(QString("  ... and %1 more results").arg(results.size() - 20));
+                            break;
+                        }
                     }
                 }
-            }
-        }, Qt::QueuedConnection);
+            }, Qt::QueuedConnection);
+        } catch (const std::exception& e) {
+            QMetaObject::invokeMethod(this, [this, query, e]() {
+                searchResultLabel_->setText("搜索出错");
+                searchResultLabel_->setStyleSheet("color: red;");
+                onLogMessage(QString("Content search error for '%1': %2").arg(query).arg(e.what()));
+            }, Qt::QueuedConnection);
+        } catch (...) {
+            QMetaObject::invokeMethod(this, [this, query]() {
+                searchResultLabel_->setText("搜索出错");
+                searchResultLabel_->setStyleSheet("color: red;");
+                onLogMessage(QString("Content search error for '%1': Unknown exception").arg(query));
+            }, Qt::QueuedConnection);
+        }
     });
 }
 

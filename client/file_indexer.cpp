@@ -1536,7 +1536,13 @@ void FileIndexer::onDirectoryChanged(const QString& path) {
     
     // 扫描目录，检测新增/删除的文件
     QtConcurrent::run([this, path]() {
-        scanDirectory(path);
+        try {
+            scanDirectory(path);
+        } catch (const std::exception& e) {
+            emit logMessage(QString("[FileIndexer] Error in directory scan: %1").arg(e.what()));
+        } catch (...) {
+            emit logMessage("[FileIndexer] Error in directory scan: Unknown exception");
+        }
     });
 }
 
