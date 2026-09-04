@@ -3,6 +3,8 @@ name: Build CrossNetShare
 on:
   push:
     branches: [ main, master ]
+    tags:
+      - 'v*'  # 当推送 v 开头的标签时触发，如 v1.0.0, v2.2.4
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:  # 允许手动触发
@@ -250,3 +252,14 @@ jobs:
         name: CrossNetShareClient
         path: CrossNetShare-Release/Client/
         retention-days: 30
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: CrossNetShare-Windows-x64.zip
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
