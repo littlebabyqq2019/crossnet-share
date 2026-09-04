@@ -44,8 +44,8 @@ Client::Client(QObject* parent)
     heartbeatTimer_->setInterval(30000);  // 30 秒
     connect(heartbeatTimer_, &QTimer::timeout, this, &Client::sendHeartbeat);
     
-    // 配置心跳检查定时器 - 每 60 秒检查一次是否收到心跳响应
-    heartbeatCheckTimer_->setInterval(60000);  // 60 秒
+    // 配置心跳检查定时器 - 每 30 秒检查一次是否收到心跳响应（与发送间隔一致）
+    heartbeatCheckTimer_->setInterval(30000);  // 30 秒（改为与发送间隔一致）
     connect(heartbeatCheckTimer_, &QTimer::timeout, this, &Client::checkHeartbeatResponse);
 
     // 配置文件监视器
@@ -234,6 +234,14 @@ void Client::onConnected() {
 
     emit connected();
     emit logMessage("Connected to server - heartbeat started");
+    
+    // 立即发送一个心跳验证连接有效性（特别是休眠后重连的情况）
+    QTimer::singleShot(1000, this, [this]() {
+        if (connected_) {
+            sendHeartbeat();
+            emit logMessage("Initial heartbeat sent to verify connection");
+        }
+    });
 
     // 如果有保存的配置，自动重新注册
     if (!clientId_.isEmpty() && !sharePath_.isEmpty()) {
@@ -758,9 +766,10 @@ void CrossNetShare::Client::checkHeartbeatResponse() {
     if (waitingForHeartbeatResponse_) {
         qint64 secondsSinceLastSent = lastHeartbeatSent_.secsTo(QDateTime::currentDateTime());
         
-        // 如果超过 60 秒没有收到响应，认为连接已断开
-        if (secondsSinceLastSent > 60) {
-            emit logMessage("Heartbeat timeout - connection appears dead, forcing reconnect...");
+        // 如果超过 45 秒没有收到响应，认为连接已断开（留出15秒缓冲）
+        if (secondsSinceLastSent > 45) {
+            emit logMessage(QString("Heartbeat timeout (%1s since last sent) - connection appears dead, forcing reconnect...")
+                .arg(secondsSinceLastSent));
             
             // 主动断开并触发重连
             socket_->disconnectFromHost();
@@ -769,6 +778,16 @@ void CrossNetShare::Client::checkHeartbeatResponse() {
             if (socket_->state() != QAbstractSocket::UnconnectedState) {
                 socket_->abort();
             }
+        }
+    } else {
+        // 额外检查：如果长时间没有发送心跳，可能定时器失效了
+        qint64 secondsSinceLastSent = lastHeartbeatSent_.secsTo(QDateTime::currentDateTime());
+        if (secondsSinceLastSent > 60) {
+            emit logMessage(QString("Warning: No heartbeat sent for %1s, checking connection...")
+                .arg(secondsSinceLastSent));
+            
+            // 尝试发送心跳验证连接
+            sendHeartbeat();
         }
     }
 }
