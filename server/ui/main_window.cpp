@@ -59,19 +59,13 @@ MainWindow::MainWindow(QWidget* parent)
 
     updateServerStatus();
 
-    // 自动启动服务器并隐藏到托盘
+    // 自动启动服务器并隐藏到托盘（静默启动）
     QTimer::singleShot(500, this, [this]() {
         if (!server_->isRunning()) {
             onStartStopClicked();
         }
-        // 启动后隐藏到托盘
+        // 启动后隐藏到托盘，不显示任何提示消息
         hide();
-        if (trayIcon_) {
-            trayIcon_->showMessage("CrossNetShare 服务器",
-                                   "服务器已启动，运行在系统托盘中",
-                                   QSystemTrayIcon::Information,
-                                   2000);
-        }
     });
 }
 
@@ -117,10 +111,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     if (trayIcon_ && trayIcon_->isVisible()) {
         hide();
         event->ignore();
-        trayIcon_->showMessage("CrossNetShare 服务器",
-                               "程序已最小化到系统托盘",
-                               QSystemTrayIcon::Information,
-                               1000);
+        // 不显示最小化提示消息
     } else {
         event->accept();
     }

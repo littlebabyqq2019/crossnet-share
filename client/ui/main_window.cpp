@@ -142,37 +142,18 @@ void MainWindow::setupTrayIcon() {
 
     trayIcon_->show();
 
-    // 启动后隐藏到托盘
-    // 临时禁用：方便调试崩溃问题
-    /*
+    // 启动后自动隐藏到托盘（静默启动）
     QTimer::singleShot(1000, this, [this]() {
         hide();
-        if (trayIcon_) {
-            trayIcon_->showMessage("CrossNetShare 客户端",
-                                   "客户端已启动，运行在系统托盘中",
-                                   QSystemTrayIcon::Information,
-                                   2000);
-        }
+        // 不显示任何提示消息，静默运行
     });
-    */
-    
-    // 显示提示：窗口保持可见以便调试
-    if (trayIcon_) {
-        trayIcon_->showMessage("CrossNetShare 客户端 (调试模式)",
-                               "窗口将保持可见以便查看日志",
-                               QSystemTrayIcon::Information,
-                               3000);
-    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     if (trayIcon_ && trayIcon_->isVisible()) {
         hide();
         event->ignore();
-        trayIcon_->showMessage("CrossNetShare 客户端",
-                               "程序已最小化到系统托盘",
-                               QSystemTrayIcon::Information,
-                               1000);
+        // 不显示最小化提示消息
     } else {
         event->accept();
     }
