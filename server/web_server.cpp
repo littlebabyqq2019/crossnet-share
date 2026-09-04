@@ -1376,7 +1376,11 @@ void WebServer::handleContentSearch(QTcpSocket* socket, const HttpRequest& reque
         item["relativePath"] = result.relativePath;
         item["ownerClient"] = result.ownerClient;
         item["size"] = result.size;
-        item["modifyTime"] = result.modifyTime;
+        
+        // 格式化时间戳为可读格式 "YYYY-MM-DD HH:MM:SS"
+        QDateTime dateTime = QDateTime::fromSecsSinceEpoch(result.modifyTime);
+        item["modifyTime"] = dateTime.toString("yyyy-MM-dd HH:mm:ss").toStdString();
+        
         responseData["results"].push_back(item);
     }
     
