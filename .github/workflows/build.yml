@@ -12,6 +12,8 @@ on:
 jobs:
   build-windows:
     runs-on: windows-2022
+    permissions:
+      contents: write  # 允许创建 Release
 
     steps:
     - name: Checkout code
@@ -255,11 +257,9 @@ jobs:
 
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: CrossNetShare-Windows-x64.zip
         draft: false
         prerelease: false
         generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
